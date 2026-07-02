@@ -19,3 +19,13 @@ class ProductService:
                 "total_pages": total_pages,
             },
         }
+
+    def search_products(self, keyword: str):
+        records = self.client.search_products(keyword)
+
+        return {
+            "data": records,
+            "meta": {
+                "total": len(records),
+            },
+        }
