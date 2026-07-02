@@ -23,3 +23,12 @@ def search_products(
     keyword: str = Query(min_length=2, max_length=50),
 ):
     return service.search_products(keyword)
+
+
+@router.get("/products/{product_id}")
+@limiter.limit("20/minute")
+def get_product(
+    request: Request,
+    product_id: int,
+):
+    return service.get_product(product_id)

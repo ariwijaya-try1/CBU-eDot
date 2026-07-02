@@ -10,6 +10,7 @@ from app.api.routes.product import router as product_router
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.security import verify_api_key
+from app.core.exceptions import AppError
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -41,6 +42,14 @@ def http_exception_handler(request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "message": exc.detail},
+    )
+
+
+@app.exception_handler(AppError)
+def app_error_handler(request, exc: AppError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, **exc.to_dict()},
     )
 
 

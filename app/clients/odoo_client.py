@@ -128,3 +128,24 @@ class OdooClient:
         )
 
         return records
+
+    def get_product_by_id(self, product_id: int):
+        domain = [
+            [
+                ("sale_ok", "=", True),
+                ("id", "=", product_id),
+            ]
+        ]
+
+        records = self._execute(
+            "product.template",
+            "search_read",
+            domain,
+            {
+                "fields": ["id", "name", "list_price", "qty_available"],
+                "limit": 1,
+            },
+        )
+
+        # search_read selalu return list, jadi ambil elemen pertama kalau ada
+        return records[0] if records else None
