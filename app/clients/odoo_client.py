@@ -149,3 +149,58 @@ class OdooClient:
 
         # search_read selalu return list, jadi ambil elemen pertama kalau ada
         return records[0] if records else None
+
+    def get_product_lots(self, product_tmpl_id: int):
+        """
+        Ambil quantity per lot dari stock.quant (di-group by lot_id),
+        lalu digabung dengan detail lot (nama + expiration_date) dari stock.lot.
+        Butuh module 'product_expiry' agar field expiration_date tersedia.
+        """
+        # read_group: hitung total quantity per lot_id.
+        # Filter location_id.usage='internal' supaya cuma stok gudang beneran
+        # (bukan lokasi virtual seperti Customer/Inventory Adjustment).
+        quants = self._execute(
+            "stock.quant",
+            "read_group",
+            [
+                [
+                    ("product_id.product_tmpl_id", "=", product_tmpl_id),
+                    ("lot_id", "!=", False),
+                    ("location_id.usage", "=", "internal"),
+                ]
+            ],
+            {
+                "fields": ["lot_id", "quantity"],
+                "groupby": ["lot_id"],
+            },
+        )
+
+        # Di hasil read_group, many2one field (lot_id) berbentuk [id, display_name]
+        lot_ids = [q["lot_id"][0] for q in quants if q.get("lot_id")]
+        if not lot_ids:
+            return []
+
+        lots = self._execute(
+            "stock.lot",
+            "search_read",
+            [[("id", "in", lot_ids)]],
+            {"fields": ["id", "name", "expiration_date"]},
+        )
+        lot_map = {lot["id"]: lot for lot in lots}
+
+        result = []
+        for q in quants:
+            if not q.get("lot_id"):
+                continue
+            lot_id = q["lot_id"][0]
+            lot_info = lot_map.get(lot_id, {})
+            result.append(
+                {
+                    "lot_id": lot_id,
+                    "lot_name": lot_info.get("name"),
+                    "qty": q["quantity"],
+                    "expiration_date": lot_info.get("expiration_date"),
+                }
+            )
+
+        return result

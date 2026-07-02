@@ -40,4 +40,6 @@ class ProductService:
                 details={"product_id": product_id},
             )
 
+        record["lots"] = self.client.get_product_lots(product_id)
+
         return {"data": record}
