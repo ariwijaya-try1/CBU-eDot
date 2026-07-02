@@ -108,3 +108,23 @@ class OdooClient:
         )
 
         return total, records
+
+    def search_products(self, keyword: str):
+        domain = [
+            [
+                ("sale_ok", "=", True),
+                ("name", "ilike", keyword),
+            ]
+        ]
+
+        records = self._execute(
+            "product.template",
+            "search_read",
+            domain,
+            {
+                "fields": ["id", "name", "list_price", "qty_available"],
+                "limit": 50,
+            },
+        )
+
+        return records
