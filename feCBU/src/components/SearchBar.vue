@@ -6,7 +6,7 @@
     <div class="card shadow-sm mt-4">
         <div class="card-body">
             <label class="form-label fw-semibold">
-                Search Customer
+                Search 
             </label>
 
             <input

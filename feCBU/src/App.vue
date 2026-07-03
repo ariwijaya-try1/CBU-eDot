@@ -1,7 +1,14 @@
-<template>
-  <Dashboard />
-</template>
-
 <script setup>
-  import Dashboard from "./views/Dashboard.vue"
+import Navbar from "./components/Navbar.vue"
+import Sidebar from "./components/Sidebar.vue"
 </script>
+
+<template>
+
+    <Navbar />
+
+    <Sidebar />
+
+    <RouterView />
+
+</template>

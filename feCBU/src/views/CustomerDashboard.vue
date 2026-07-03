@@ -1,7 +1,6 @@
 <script setup>
 import { ref, onMounted, watch } from "vue"
-import api from "../services/api"
-import Navbar from "../components/Navbar.vue"
+import api from "../services/api.js"
 import SearchBar from "../components/SearchBar.vue"
 import CustomerTable from "../components/CustomerTable.vue"
 import "bootstrap-icons/font/bootstrap-icons.css"
@@ -69,18 +68,28 @@ const searchCustomers = async () => {
     })
 
 watch(limit, () => {
-    page.value=1
-    getCustomers()
-    watch(keyword, (newValue) => {
-        console.log("WATCH:", newValue)
+    page.value = 1
+
+    if (keyword.value.trim()) {
         searchCustomers()
-    })
+    } else {
+        getCustomers()
+    }
+})
+
+watch(keyword, () => {
+    page.value = 1
+
+    if (keyword.value.trim()) {
+        searchCustomers()
+    } else {
+        getCustomers()
+    }
 })
 </script>
 
 <!-- Tampilan dari Dashboard -->
 <template>
-    <Navbar />
     <div class="style-wrapper">
         <div class="container mt-4">
             <h2 class="fw-bold">

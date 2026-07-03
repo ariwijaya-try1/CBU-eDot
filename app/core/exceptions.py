@@ -33,7 +33,6 @@ class AppError(Exception):
 # 🔥 COMMON PREDEFINED ERRORS
 # =========================
 
-
 class OdooConnectionError(AppError):
     def __init__(self, message="Failed to connect to Odoo", details=None):
         super().__init__(
