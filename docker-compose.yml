@@ -11,3 +11,19 @@ services:
       - .:/app
     working_dir: /app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./feCBU
+      dockerfile: Dockerfile
+    container_name: eDot_cbu_vue
+    restart: always
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./feCBU:/app
+      - /app/node_modules
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0
+    depends_on:
+      - app
