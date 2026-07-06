@@ -1,8 +1,8 @@
 <script setup>
 import { ref, onMounted, watch } from "vue"
-import api from "../services/api.js"
-import SearchBar from "../components/SearchBar.vue"
-import CustomerTable from "../components/CustomerTable.vue"
+import api from "../../services/api.js"
+import SearchBar from "../../components/SearchBar.vue"
+import CustomerTable from "../../components/CustomerTable.vue"
 import "bootstrap-icons/font/bootstrap-icons.css"
 
 const customers = ref([])
@@ -91,7 +91,7 @@ watch(keyword, () => {
 <!-- Tampilan dari Dashboard -->
 <template>
     <div class="style-wrapper">
-        <div class="container mt-4">
+        <div class="container-fluid mt-4">
             <h2 class="fw-bold">
                 Customer Dashboard
             </h2>

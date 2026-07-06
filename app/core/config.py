@@ -1,6 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
