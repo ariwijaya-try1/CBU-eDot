@@ -2,9 +2,7 @@ from typing import Any, Optional, Dict
 
 
 class AppError(Exception):
-    """
-    Base application error (AI-friendly + API-friendly)
-    """
+    """Base application error (AI-friendly + API-friendly)"""
 
     def __init__(
         self,
@@ -30,55 +28,57 @@ class AppError(Exception):
 
 
 # =========================
-# 🔥 COMMON PREDEFINED ERRORS
+# Odoo errors
 # =========================
 
 
 class OdooConnectionError(AppError):
     def __init__(self, message="Failed to connect to Odoo", details=None):
-        super().__init__(
-            code="ODOO_CONNECTION_FAILED",
-            message=message,
-            details=details,
-            status_code=502,
-        )
+        super().__init__(code="ODOO_CONNECTION_FAILED", message=message, details=details, status_code=502)
 
 
 class OdooTimeoutError(AppError):
     def __init__(self, message="Odoo request timeout", details=None):
-        super().__init__(
-            code="ODOO_TIMEOUT",
-            message=message,
-            details=details,
-            status_code=504,
-        )
+        super().__init__(code="ODOO_TIMEOUT", message=message, details=details, status_code=504)
 
 
 class OdooRPCError(AppError):
     def __init__(self, message="Odoo RPC error", details=None):
+        super().__init__(code="ODOO_RPC_ERROR", message=message, details=details, status_code=500)
+
+
+# =========================
+# eSuite errors
+# =========================
+
+
+class EsuiteAuthError(AppError):
+    def __init__(self, message="eSuite authentication failed", details=None):
+        super().__init__(code="ESUITE_AUTH_FAILED", message=message, details=details, status_code=401)
+
+
+class EsuiteDuplicateRequestError(AppError):
+    def __init__(self, message="eSuite request id already exists", details=None):
         super().__init__(
-            code="ODOO_RPC_ERROR",
-            message=message,
-            details=details,
-            status_code=500,
+            code="ESUITE_DUPLICATE_REQUEST", message=message, details=details, status_code=409
         )
+
+
+class EsuiteRPCError(AppError):
+    def __init__(self, message="eSuite request failed", details=None):
+        super().__init__(code="ESUITE_RPC_ERROR", message=message, details=details, status_code=502)
+
+
+# =========================
+# Generic
+# =========================
 
 
 class ValidationError(AppError):
     def __init__(self, message="Validation error", details=None):
-        super().__init__(
-            code="VALIDATION_ERROR",
-            message=message,
-            details=details,
-            status_code=422,
-        )
+        super().__init__(code="VALIDATION_ERROR", message=message, details=details, status_code=422)
 
 
 class NotFoundError(AppError):
     def __init__(self, message="Resource not found", details=None):
-        super().__init__(
-            code="NOT_FOUND",
-            message=message,
-            details=details,
-            status_code=404,
-        )
+        super().__init__(code="NOT_FOUND", message=message, details=details, status_code=404)
