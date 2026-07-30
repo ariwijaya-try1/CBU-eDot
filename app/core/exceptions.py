@@ -69,6 +69,11 @@ class EsuiteRPCError(AppError):
         super().__init__(code="ESUITE_RPC_ERROR", message=message, details=details, status_code=502)
 
 
+class EsuiteConnectionError(AppError):
+    def __init__(self, message="Failed to connect to eSuite", details=None):
+        super().__init__(code="ESUITE_CONNECTION_FAILED", message=message, details=details, status_code=502)
+
+
 # =========================
 # Generic
 # =========================

@@ -1,14 +1,15 @@
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import ValidationError
+from app.core.scope import IN_SCOPE_COMPANY_NAMES
 
 # Kode wilayah administratif eSuite untuk lokasi gedung yang dipakai.
-# Diisi MANUAL (bukan pull otomatis) karena jumlah Branch cuma 1-2 dan
+# Diisi MANUAL (bukan pull otomatis) karena jumlah Branch cuma 2 dan
 # lokasinya jarang berubah -- cara dapetinnya: panggil GET /administrative-areas
 # ke eSuite sandbox sekali, cari baris yang cocok sama alamat gedung asli,
 # lalu isi code & name di bawah ini persis seperti yang eSuite kasih.
 #
-# TODO: isi 3 baris ini sebelum endpoint /sync/branch dites ke sandbox.
+# TODO: isi 3 baris ini sebelum push dites lagi ke sandbox.
 ADMINISTRATIVE_AREA = {
     "country": {"name": "Indonesia", "code": "ID"},
     "province": {"name": "", "code": ""},
@@ -23,12 +24,15 @@ class BranchSyncService:
         self.esuite = EsuiteClient()
 
     def sync(self, event: str = "upsert"):
-        warehouses = self.odoo.get_warehouses()
+        companies = self.odoo.get_companies(IN_SCOPE_COMPANY_NAMES)
 
-        if not warehouses:
-            raise ValidationError("Tidak ada warehouse aktif ditemukan di Odoo")
+        if not companies:
+            raise ValidationError(
+                "Tidak ada res.company yang cocok dengan IN_SCOPE_COMPANY_NAMES",
+                details={"expected_names": IN_SCOPE_COMPANY_NAMES},
+            )
 
-        payload = [self._to_esuite_payload(wh) for wh in warehouses]
+        payload = [self._to_esuite_payload(c) for c in companies]
         esuite_result = self.esuite.push("branches", event=event, data=payload)
 
         return {
@@ -37,20 +41,20 @@ class BranchSyncService:
             "esuite_response": esuite_result,
         }
 
-    def _to_esuite_payload(self, warehouse: dict) -> dict:
-        # partner_id dari Odoo berbentuk [id, display_name] (many2one),
-        # bukan langsung int -- lihat catatan gotcha RPC yang sudah diketahui.
-        partner = warehouse.get("partner_id")
+    def _to_esuite_payload(self, company: dict) -> dict:
+        # partner_id dari Odoo berbentuk [id, display_name] (many2one).
+        partner = company.get("partner_id")
         address_data = self.odoo.get_partner_address(partner[0]) if partner else {}
         address_data = address_data or {}
 
         return {
-            "name": warehouse["name"],
+            "name": company["name"],
             "status": "active",
             "basic_info": {
                 # external_code = key upsert/delete di eSuite -- harus stabil & unik.
-                # Prefix "ODOO-WH-" biar jelas asalnya dari stock.warehouse Odoo.
-                "external_code": f"ODOO-WH-{warehouse['id']}",
+                # Prefix "ODOO-COMPANY-" karena sumbernya sekarang res.company,
+                # bukan stock.warehouse lagi (lihat catatan koreksi mapping entity).
+                "external_code": f"ODOO-COMPANY-{company['id']}",
             },
             "address": {
                 "country": ADMINISTRATIVE_AREA["country"],

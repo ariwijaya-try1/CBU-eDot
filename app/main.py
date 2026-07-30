@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
 from app.api.routes.branch import router as branch_router
+from app.api.routes.warehouse import router as warehouse_router
 from app.core.config import settings
 from app.core.security import verify_api_key
 from app.core.exceptions import AppError
@@ -30,6 +31,7 @@ def app_error_handler(request, exc: AppError):
 
 
 app.include_router(branch_router, prefix="/api")
+app.include_router(warehouse_router, prefix="/api")
 
 
 @app.get("/")

@@ -10,6 +10,7 @@ import requests
 from app.core.config import settings
 from app.core.exceptions import (
     EsuiteAuthError,
+    EsuiteConnectionError,
     EsuiteDuplicateRequestError,
     EsuiteRPCError,
 )
@@ -70,7 +71,7 @@ class EsuiteClient:
         url = f"{self.base_url}/{entity_path}"
         headers = self._headers(raw_body, request_id)
 
-        response = self.session.post(url, data=raw_body, headers=headers, timeout=30)
+        response = self._safe_request("POST", url, data=raw_body, headers=headers)
         return self._handle_response(response, request_id)
 
     def pull(self, entity_path: str, page: int = 1, limit: int = 100) -> dict:
@@ -80,10 +81,29 @@ class EsuiteClient:
         headers = self._headers(raw_body, request_id)
 
         url = f"{self.base_url}/{entity_path}"
-        response = self.session.get(
-            url, headers=headers, params={"page": page, "limit": limit}, timeout=30
+        response = self._safe_request(
+            "GET", url, headers=headers, params={"page": page, "limit": limit}
         )
         return self._handle_response(response, request_id)
+
+    def _safe_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """
+        Bungkus request supaya kegagalan koneksi (DNS gagal, timeout, host
+        nggak reachable) muncul sebagai EsuiteConnectionError yang jelas --
+        bukan crash 500 generic tanpa konteks.
+        """
+        try:
+            return self.session.request(method, url, timeout=30, **kwargs)
+        except requests.ConnectionError as e:
+            raise EsuiteConnectionError(
+                message=f"Gagal konek ke eSuite ({url}) -- cek DNS/network/host sandbox",
+                details={"raw": str(e)},
+            )
+        except requests.Timeout as e:
+            raise EsuiteConnectionError(
+                message=f"Timeout menghubungi eSuite ({url})",
+                details={"raw": str(e)},
+            )
 
     def _handle_response(self, response: requests.Response, request_id: str) -> dict:
         try:
