@@ -3,6 +3,5 @@ uvicorn==0.30.0
 requests==2.32.3
 python-dotenv
 pydantic
-slowapi==0.1.9
-python-dotenv
 pydantic-settings
+slowapi==0.1.9
