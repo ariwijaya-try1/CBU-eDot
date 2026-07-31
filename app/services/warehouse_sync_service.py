@@ -30,6 +30,7 @@ class WarehouseSyncService:
         return {
             "synced_count": len(payload),
             "external_codes": [item["external_code"] for item in payload],
+            "payload_sent": payload,
             "esuite_response": esuite_result,
         }
 
