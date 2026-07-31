@@ -1,34 +1,16 @@
-from fastapi import APIRouter, Request, Query
-from app.core.limiter import limiter
-from app.services.product_service import ProductService
+from fastapi import APIRouter, Query
+from app.services.product_sync_service import ProductSyncService
 
 router = APIRouter()
-service = ProductService()
+service = ProductSyncService()
 
 
-@router.get("/products")
-@limiter.limit("20/minute")
-def get_products(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=10, ge=1, le=100),
+@router.post("/sync/product")
+def sync_product(
+    event: str = Query(default="upsert", pattern="^(init|upsert)$"),
 ):
-    return service.get_products(page=page, limit=limit)
-
-
-@router.get("/products/search")
-@limiter.limit("20/minute")
-def search_products(
-    request: Request,
-    keyword: str = Query(min_length=2, max_length=50),
-):
-    return service.search_products(keyword)
-
-
-@router.get("/products/{product_id}")
-@limiter.limit("20/minute")
-def get_product(
-    request: Request,
-    product_id: int,
-):
-    return service.get_product(product_id)
+    """
+    Trigger manual sync Product: Odoo (product.product, Saleable & free_qty>0) -> eSuite.
+    Butuh Product Category sudah ke-push duluan (POST /sync/product-category).
+    """
+    return service.sync(event=event)
