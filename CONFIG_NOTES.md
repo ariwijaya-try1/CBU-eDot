@@ -67,11 +67,47 @@ UOM_MAPPING = {
 }
 ```
 
+**`purchase_uom` & `uom_levels` (REVISI 5 Agustus 2026, dicek langsung dari Postman collection eSuite):** dua field ini ADA di skema resmi `POST /product` (contoh payload di collection), tapi sebelumnya belum dikirim di payload kita — push tetap sukses (jadi optional secara teknis), tapi ditambahkan sekarang biar payload lengkap/aman untuk kebutuhan konversi unit ke depan (mis. Sales Order line qty).
+- `purchase_uom`: diisi sama dengan `base_uom` — Odoo kami tidak punya konsep purchase UOM terpisah dari sales/base UOM.
+- `uom_levels`: array 1 level, `{uom: base_uom, qty: 1, convertion: 1}` — karena tidak ada packaging multi-level di data kami (tiap ukuran/kemasan = `product.product` id sendiri-sendiri, bukan 1 produk dengan beberapa level konversi; lihat bagian "Struktur Produk & Variant").
+
 **`cost`** (harga beli) diambil dari `standard_price` Odoo. **`base_price`** (harga jual) dari `list_price`.
 
 **⚠️ Catatan kualitas data (bukan bug kode):** ditemukan beberapa produk dengan `base_price: 1` atau `cost: 0` di hasil push nyata — kemungkinan `list_price`/`standard_price` belum di-set benar di Odoo untuk produk-produk itu. Perlu dicek ke tim yang pegang data produk sebelum go-live, supaya harga di dashboard sales tidak salah tampil.
 
-**STATUS ENTITY PRODUCT: ✅ SELESAI, TERVALIDASI END-TO-END** (731 produk berhasil disync ke sandbox, 30/31 Juli 2026). **Catatan:** angka 731 itu dari sebelum revisi filter `free_qty` tanggal 5 Agustus 2026 -- setelah revisi, jumlah produk yang disync akan lebih besar (produk dengan `free_qty = 0` yang sebelumnya ke-exclude sekarang ikut kekirim). Perlu re-test hitung ulang jumlahnya sebelum go-live.
+**STATUS ENTITY PRODUCT: ✅ SELESAI, TERVALIDASI END-TO-END.** Riwayat angka: 731 produk (30/31 Juli 2026, sebelum revisi filter `free_qty`) → **1247 produk** (5 Agustus 2026, setelah revisi — produk `free_qty=0` sekarang ikut tersync). Push ke sandbox `esuite_response: status 200 "success"`, tidak ada error mapping category/UOM untuk 1247 produk tsb. **Payload `purchase_uom`/`uom_levels` ditambahkan setelah validasi ini — belum di-re-test ke sandbox**, lihat TODO di session transfer note.
+
+**⚠️ Update catatan kualitas data (5 Agustus 2026):** setelah revisi filter, jumlah produk dengan `base_price: 1` dan/atau `cost: 0` di hasil push nyata jadi lebih banyak kelihatan (contoh: beberapa varian OLIVIVERO Freeze Dried, KANEKA Filling tertentu, KIMBO Bites Sosis Ayam, VIGO Sosis Ayam 20 Pcs, JAVA BITE Dried Mango Tropical Paradise, SUN FOOD Black Salt, ELATE Basmati Rice 25kg, SUNBAY Sterilised Milk & Krimer Kental Manis, DIM SUM Mini Veg Risoles, VOYA Syrup Palm Sugar, NOEL Tapas De Espana, dll). Dugaan: produk stok 0 sering juga belum sempat di-set harganya di Odoo — dua masalah data yang berkorelasi. **Perlu dicek ke tim data produk sebelum go-live** supaya harga `Rp 1` tidak salah tampil ke sales/customer di dashboard eSuite.
+
+---
+
+## Product Brand & UOM Level — DICEK, TIDAK DIPERLUKAN untuk Product (5 Agustus 2026)
+
+Dicek langsung dari Postman collection eSuite (search string di seluruh file JSON):
+- **`product_brand`**: **0 kemunculan** di manapun di collection — field ini TIDAK direferensikan dari payload `POST /product` (atau entity lain manapun yang sudah dicek). Entity `/product-brand` (`GET`/`POST`) memang ada sebagai master data standalone (`external_code`, `name`, `status`), tapi tidak ada link dari Product ke Brand di skema yang kelihatan.
+- **`uom-level` (entity standalone, `POST /uom-level` dengan `external_code`/`name`/`description`/`status`)**: TIDAK direferensikan oleh ID dari payload Product manapun. Ini beda dari field `uom_levels` (huruf kecil, plural, array) yang ADA di dalam payload `/product` — dua hal yang namanya mirip tapi TIDAK berhubungan. `uom_levels` di payload Product isinya array `{uom, qty, convertion}` langsung, bukan referensi ke entity `/uom-level`.
+
+**Kesimpulan:** dua-duanya (`/product-brand` dan `/uom-level`) **di-skip dulu**, tidak perlu dibikin sync service-nya sekarang — tidak ada dependency dari entity Product. Kalau nanti ternyata dashboard eSuite butuh brand utk filter/grouping (bukan cuma soal push berhasil), baru direvisit — tapi dari sisi API contract, tidak wajib.
+
+---
+
+## ⚠️ Temuan Penting: Stock Matrix Butuh `product_variant`, Bukan `product` (5 Agustus 2026)
+
+Dicek dari contoh payload `POST /stock-matrix` di Postman collection:
+```json
+{
+  "external_code": "PM-stk",
+  "product_variant": {"id": "..."},
+  "uom": {"id": "..."},
+  "location": {"id": "..."},
+  "free_to_use": 10,
+  "on_hand": 10,
+  "quantity": 10
+}
+```
+Field-nya `product_variant`, **BUKAN** `product`. Ini berpotensi bentrok dengan keputusan yang sudah diambil di bagian "Struktur Produk & Variant" (tidak pakai `/product-variant` sama sekali, cukup `/product`). Kalau Stock Matrix di eSuite memang HARUS nempel ke `product_variant` (bukan `product`), berarti nanti pas ngerjain entity Stock Matrix, kita mungkin tetap perlu push `/product-variant` (mungkin 1:1 dengan tiap `/product`, sekadar biar ada ID buat direferensikan Stock Matrix) — meskipun secara bisnis tidak ada konsep "variant" beneran di data kami.
+
+**Belum ditindaklanjuti** — di luar scope Product/Brand/UOM Level, dicatat sebagai blocker/pertanyaan buat pas mulai kerjain Stock Matrix nanti. Kemungkinan juga perlu ditanyakan ke tim IT eSuite.
 
 ---
 

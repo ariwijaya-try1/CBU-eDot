@@ -134,6 +134,20 @@ class ProductSyncService:
             "product_type": PRODUCT_TYPE,
             "product_category": {"id": category_esuite_id},
             "base_uom": self._resolve_uom(uom[1] if uom else ""),
+            # purchase_uom & uom_levels -- REVISI 5 Agustus 2026, ditambahkan setelah
+            # dicek langsung ke Postman collection eSuite (contoh payload POST /product).
+            # Odoo kami tidak punya konsep purchase UOM terpisah dari sales/base UOM,
+            # dan tidak ada packaging multi-level (tiap ukuran = product.product id
+            # sendiri, lihat CONFIG_NOTES.md), jadi keduanya diisi konsisten dari
+            # base_uom yang sama -- 1 level, qty=1, convertion=1.
+            "purchase_uom": self._resolve_uom(uom[1] if uom else ""),
+            "uom_levels": [
+                {
+                    "uom": self._resolve_uom(uom[1] if uom else ""),
+                    "qty": 1,
+                    "convertion": 1,
+                }
+            ],
             "cost": product.get("standard_price") or 0,
             "base_price": product.get("list_price") or 0,
             "currency": CURRENCY,

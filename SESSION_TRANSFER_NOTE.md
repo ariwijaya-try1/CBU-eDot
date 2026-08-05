@@ -55,7 +55,20 @@ Postman collection + environment DEV > PDF.
 - Field `free_qty` tetap diambil dari Odoo query (masih relevan untuk entity **Stock Matrix** yang belum dikerjakan -- field `free_to_use` di sana tetap harus diisi dari `free_qty` Odoo apa adanya, termasuk kalau nilainya 0). Cuma tidak lagi dipakai sebagai syarat include/exclude di sync `/product`.
 - `CONFIG_NOTES.md` sudah diupdate sesi ini untuk mencerminkan aturan baru (bagian "Filter Data" & "Referensi eSuite untuk Entity Product").
 
-**Belum dilakukan (next step, lihat poin 12):** re-run `/sync/product` ke sandbox untuk lihat jumlah produk baru yang ikut kekirim (kemungkinan lebih dari 731), dan pastikan tidak ada error baru dari produk-produk stok 0 yang sebelumnya belum pernah lewat proses mapping/push (mis. UOM asing yang belum ada di `UOM_MAPPING`, atau category yang belum ke-resolve).
+**✅ Sudah di-re-run ke sandbox (5 Agustus 2026):** `synced_count: 1247` (naik dari 731), `esuite_response: status 200 "success"`, tidak ada error mapping category/UOM. Revisi filter dinyatakan **tervalidasi**.
+
+**Temuan baru dari hasil re-run (bukan bug kode, catatan kualitas data):** cukup banyak produk di batch 1247 ini punya `base_price: 1` dan/atau `cost: 0` -- terlihat lebih menonjol sekarang karena produk `free_qty=0` yang baru ikut tersync sering juga belum sempat di-set harganya di Odoo. Sudah dicatat di `CONFIG_NOTES.md` bagian "Referensi eSuite untuk Entity Product". **Perlu ditindaklanjuti ke tim data produk sebelum go-live** -- di luar scope perbaikan kode, murni isu data source Odoo.
+
+## 7b. Product Brand & UOM Level -- Dicek via Postman Collection (5 Agustus 2026)
+
+User upload Postman collection + environment DEV eSuite. Hasil cek (search string di seluruh file JSON, bukan cuma baca 1-2 request):
+
+- **`/product-brand`**: field `product_brand` **0 kemunculan** di manapun -- tidak direferensikan dari payload `/product` atau entity lain manapun. **Di-skip**, tidak perlu dibikin sync service.
+- **`/uom-level`** (entity standalone, beda dari field `uom_levels`): juga tidak direferensikan oleh ID dari payload manapun. **Di-skip** juga.
+- **TAPI ketemu 2 field yang seharusnya ada di payload `/product` tapi belum kita kirim:** `purchase_uom` (object `{id}`) dan `uom_levels` (array `{uom, qty, convertion}`). Sudah **ditambahkan** ke `product_sync_service.py::_to_esuite_payload()` -- diisi dari `base_uom` yang sama (qty=1, convertion=1), karena Odoo kami tidak punya konsep purchase UOM terpisah atau packaging multi-level. **Belum di-re-test ke sandbox** -- ini next TODO.
+- **Temuan bonus, di luar scope tapi penting:** payload `/stock-matrix` referensi `product_variant.id`, BUKAN `product.id`. Berpotensi bentrok dengan keputusan "tidak pakai /product-variant sama sekali". Dicatat di `CONFIG_NOTES.md`, belum ditindaklanjuti -- baru relevan pas mulai kerjain Stock Matrix.
+
+**File Postman collection & environment sudah tersimpan** di `/home/claude/bridge/eSuite-Webhook_postman_collection.json` (working dir sesi ini) -- kalau chat baru, minta user upload ulang kalau perlu cross-check field lain.
 
 ## 8. Bug yang Sudah Diperbaiki Sesi-Sesi Lalu
 
@@ -83,7 +96,7 @@ app/
 │   ├── branch_sync_service.py           # ✅✅ tervalidasi
 │   ├── warehouse_sync_service.py        # ✅✅ tervalidasi
 │   ├── product_category_sync_service.py # ✅✅ tervalidasi
-│   └── product_sync_service.py          # ✅✅ tervalidasi, REVISI filter free_qty (5 Agustus 2026)
+│   └── product_sync_service.py          # ✅✅ tervalidasi (filter), 🟡 payload purchase_uom/uom_levels ditambahkan BELUM di-re-test
 └── api/routes/
     ├── branch.py, warehouse.py, product_category.py       # tervalidasi
     └── product.py                       # docstring diupdate
@@ -95,10 +108,13 @@ Semua lolos `python3 -m py_compile`.
 
 ## 12. TODO Berikutnya (urutan langsung lanjut)
 
-1. **Re-run `POST /api/sync/product?event=upsert`** ke sandbox, catat jumlah produk baru (bandingkan vs 731 sebelumnya) dan cek `payload_sent` untuk produk-produk yang sebelumnya ke-exclude karena stok 0 -- pastikan tidak ada error mapping baru (UOM asing / category belum ke-resolve).
-2. Kalau lancar, lanjut ke **Product Brand** & **UOM Level** kalau memang masih dibutuhkan (belum jelas apakah masih perlu -- perlu dicek apakah eSuite butuh `uom_levels` array/hierarki atau `base_uom` doang cukup).
-3. Baru lanjut ke **Customer**.
-4. Update `CONFIG_NOTES.md` tiap ada aturan bisnis baru -- terpisah dari update session transfer note.
+1. ~~Re-run `/sync/product`, validasi filter `free_qty`~~ ✅ selesai (1247 produk, sukses).
+2. ~~Cek Product Brand & UOM Level~~ ✅ selesai -- keduanya di-skip (tidak dipakai eSuite), tapi ketemu `purchase_uom`/`uom_levels` yang seharusnya ada di payload Product & sudah ditambahkan ke kode.
+3. **Re-run `POST /api/sync/product?event=upsert` sekali lagi** ke sandbox untuk validasi payload baru (`purchase_uom` + `uom_levels`) -- pastikan eSuite terima tanpa error, cek `payload_sent` di response buat mastiin struktur `uom_levels` sesuai yang diharapkan eSuite.
+4. Flag ke tim data produk soal `base_price: 1` / `cost: 0` sebelum go-live (non-coding, lihat CONFIG_NOTES).
+5. Lanjut ke **Customer** -- masih perlu ditentukan dulu sumber model Odoo-nya (`res.partner`? ada opsi lain?).
+6. **Ada temuan terbuka soal Stock Matrix vs `/product-variant`** (lihat CONFIG_NOTES bagian terkait) -- belum jadi TODO aktif, tapi perlu diingat sebelum mulai entity Stock Matrix.
+7. Update `CONFIG_NOTES.md` tiap ada aturan bisnis baru -- terpisah dari update session transfer note.
 
 ## 13. Daftar Pertanyaan Sync dengan Tim IT eSuite
 
