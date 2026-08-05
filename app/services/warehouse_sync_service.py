@@ -40,19 +40,29 @@ class WarehouseSyncService:
         {"data": "success"}, tanpa ID). Jadi ID Branch yang baru dibuat harus
         di-PULL balik & dicocokkan lewat external_code kita sendiri.
 
+        Loop semua halaman (bukan cuma page 1) -- sama seperti bug yang
+        ketauan di resolve Product Category, dicegah di sini juga.
+
         Return: {odoo_company_id: esuite_branch_id}
         """
-        pulled = self.esuite.pull("branches", page=1, limit=100)
-        records = pulled.get("data") or []
-
         by_external_code = {}
-        for r in records:
-            # Dicek 2 kemungkinan lokasi field -- dokumen nggak eksplisit
-            # apakah GET balikin external_code di top-level atau di dalam
-            # basic_info (bentuk PUSH-nya nested, GET belum pernah dites).
-            code = r.get("external_code") or (r.get("basic_info") or {}).get("external_code")
-            if code:
-                by_external_code[code] = r.get("id")
+        page = 1
+        limit = 100
+
+        while True:
+            pulled = self.esuite.pull("branches", page=page, limit=limit)
+            records = pulled.get("data") or []
+
+            for r in records:
+                code = r.get("external_code") or (r.get("basic_info") or {}).get("external_code")
+                if code:
+                    by_external_code[code] = r.get("id")
+
+            meta = pulled.get("meta") or {}
+            total_page = meta.get("total_page", 1)
+            if page >= total_page:
+                break
+            page += 1
 
         result = {}
         for company in companies:

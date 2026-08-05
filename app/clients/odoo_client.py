@@ -101,10 +101,13 @@ class OdooClient:
         - categ_id.complete_name ilike "ALL / SALEABLE" -- produk yang boleh dijual
         - list_price > 0 -- exclude produk yang harganya belum di-set
 
-        Filter free_qty > 0 TIDAK di domain -- itu computed field, Odoo tidak
-        support filter domain untuk computed field. Difilter di
-        ProductSyncService setelah hasil query balik (bukan di sini), biar
-        konsisten dengan pola yang dipakai project referensi searchProduct.
+        REVISI 5 Agustus 2026: filter free_qty > 0 DIHAPUS (baik di domain
+        maupun di post-filter Python). Produk dengan free_qty = 0 tetap
+        disync -- keputusan bisnis: stok kosong bisa berarti belum diupdate
+        atau masih proses produksi, produk tetap boleh ditawarkan sales.
+        Field free_qty tetap diambil & dikirim apa adanya (termasuk 0) lewat
+        field stok terkait, cuma tidak lagi dipakai sebagai syarat exclude
+        dari katalog produk. Lihat CONFIG_NOTES.md untuk detail keputusan ini.
         """
         domain = [
             [
@@ -119,6 +122,26 @@ class OdooClient:
             domain,
             {"fields": ["id", "name", "free_qty", "categ_id", "list_price", "standard_price", "uom_id"]},
         )
+
+    def get_categories_by_ids(self, ids: list):
+        """
+        Ambil name asli (leaf name, bukan complete_name) untuk sekumpulan
+        category id -- dipakai product_sync_service buat cocokkan balik ke
+        eSuite product-category, KARENA GET /product-category eSuite tidak
+        balikin external_code sama sekali (lihat CONFIG_NOTES.md), jadi
+        matching terpaksa pakai name.
+        """
+        if not ids:
+            return {}
+
+        domain = [[("id", "in", ids)]]
+        records = self._execute(
+            "product.category",
+            "search_read",
+            domain,
+            {"fields": ["id", "name"]},
+        )
+        return {r["id"]: r["name"] for r in records}
 
     @staticmethod
     def _name_in_domain(names: list):

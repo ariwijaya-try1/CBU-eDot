@@ -1,173 +1,116 @@
-# Session Transfer Note v4 — Odoo → eSuite Bridge
+# Session Transfer Note v7 — Odoo → eSuite Bridge
 
-> Dibuat 30 Juli 2026. **Menggantikan v3.** Update besar: kredensial sandbox real sudah didapat & terverifikasi live, ditemukan & diperbaiki kesalahan mapping entity (Branch vs Warehouse), Warehouse jadi entity baru. Tempel file ini di awal chat baru.
+> Dibuat 5 Agustus 2026. **Menggantikan v6.** Update: revisi aturan filter Product -- `free_qty > 0` DIHAPUS sebagai syarat exclude (produk stok 0 tetap disync). Tempel file ini di awal chat baru, bareng `CONFIG_NOTES.md`.
+>
+> **PENTING:** ada file kedua yang WAJIB dibaca bareng ini: **`CONFIG_NOTES.md`** (dibundle jadi 1 di dalam zip kode terbaru). File itu isinya aturan bisnis & konfigurasi PERMANEN (filter Saleable, currency, UOM, dll) yang beda fungsi dari catatan sesi ini — jangan diskip.
 
 ---
 
 ## 1. Scope App (FIXED)
 
-App ini **murni bridge**: populasi data dari **Odoo 19 (SSOT)** ke **eSuite/eDOT**, satu arah (**push-only, Odoo → eSuite**), tanpa pengecualian (termasuk NOO flow — poin 3). Tidak menangani sales dashboard karyawan.
+Bridge murni: **Odoo 19 (SSOT) → eSuite/eDOT**, satu arah (push-only), tanpa pengecualian. Auth: API key statis. Tidak pakai JWT, slowapi, CORS.
 
-- Auth: API key statis (`verify_api_key`, header `x-api-key`). Tidak butuh JWT.
-- `app.zip` eksperimen lama: deprecated total.
-- `slowapi` & `CORSMiddleware`: sengaja dibuang dari `main.py` (tidak relevan untuk bridge internal-only).
+## 2. Trigger Sync (FIXED)
 
-## 2. Trigger Sync (FIXED untuk fase awal)
+Manual, 1 endpoint per entity. Response tiap endpoint selalu include `payload_sent` (data lengkap yang dikirim ke eSuite).
 
-- **Manual**, 1 endpoint per entity (`POST /api/sync/branch`, `POST /api/sync/warehouse`, dst). Goal jangka panjang real-time, ditunda.
-- Alasan endpoint per-entity (bukan generik `/sync/{entity}`): endpoint generik cuma mindahin kompleksitas jadi percabangan besar. Logic yang sama (signing, retry) di-share lewat `EsuiteClient`, bukan lewat routing. Refactor ke generik ditunda sampai 3+ entity berpola identik ("phase 10", becandaan user).
+## 3. NOO Flow — Tidak di-handle fase awal.
 
-## 3. NOO Flow — Tidak di-handle di fase awal
+## 4. Reference Cache / ID Mapping
 
-Odoo tetap SSOT penuh, bridge one-directional tanpa pengecualian.
+Push eSuite tidak balikin ID -- reconcile via pull + cocokkan `external_code`. Posisi field `external_code` di response GET **beda-beda per entity** (lihat `CONFIG_NOTES.md`). Kode matching selalu dibuat defensif.
 
-## 4. Reference Cache / ID Mapping — Kenapa Dibutuhkan (UPDATE PENTING)
+## 5. Prioritas Dokumen — FIXED
 
-**Temuan baru yang mengubah timeline:** ternyata **push ke eSuite TIDAK mengembalikan ID yang di-generate** (§6 dokumen: response push cuma `{"status":200,"message":"","data":"success"}`, tanpa ID). Dokumen eksplisit bilang *"reconcile via the pull (GET) endpoints"*.
+Postman collection + environment DEV > PDF.
 
-Ini artinya pola "pull untuk resolve ID eSuite" **sudah dibutuhkan mulai entity Warehouse** (bukan baru mulai di Customer seperti dugaan awal). Warehouse butuh ID Branch yang di-generate eSuite untuk field `branches: [{id}]` — satu-satunya cara dapetin itu adalah `GET /branches` lalu cocokkan lewat `external_code` kita sendiri.
+## 6. Mapping Entity -- Status Semua yang Sudah Dikerjakan
 
-**Pendekatan saat ini (masih sengaja sederhana):** pull langsung on-the-fly tiap kali `/sync/warehouse` dipanggil (data dikit — cuma 2 Branch — jadi murah), **belum** disimpan ke tabel Postgres permanen. Cache Postgres beneran baru dibangun mulai entity **Customer**, di mana skalanya (reference wilayah administratif, ratusan/ribuan kombinasi) baru masuk akal untuk diotomatisasi & disimpan permanen.
-
-Prinsip dasar tetap sama seperti sebelumnya: tabel ini **bukan** data bisnis (itu tetap 100% dari Odoo), cuma "kamus terjemahan" ID pihak ketiga.
-
-## 5. Excel "eDOT Template Master Data Go Live" — statusnya
-
-Belum dikonfirmasi bagian dari alur teknis atau cuma form manual sisi bisnis. Dianggap referensi field saja, bukan diparsing otomatis.
-
-## 6. KOREKSI BESAR: Sumber Dokumen & Mapping Entity
-
-### 6a. Prioritas dokumen — FIXED
-**Postman collection (`eSuite-Webhook_postman_collection.json`) + environment (`eSuite-Webhook-DEV_postman_environment.json`) adalah sumber kebenaran di atas PDF**, karena PDF terbukti mengandung info yang sudah usang (base URL salah — lihat poin 7). PDF tetap dipakai untuk detail field/required-fields yang tidak ada di collection, tapi kalau bentrok, **collection menang**.
-
-### 6b. Branch vs Warehouse — ternyata 2 entity terpisah, bukan 1
-
-**Kesalahan yang sempat terjadi:** kode awal (v1-v3) memetakan `stock.warehouse` (Odoo) langsung ke endpoint `/branches` (eSuite). Ini salah — collection punya `POST /warehouse` yang terpisah dari `POST /branches`, dan `/warehouse` payload-nya punya field `branches: [{id: <esuite_branch_id>}]` — Warehouse **mereferensi** Branch, bukan Branch itu sendiri. Dikonfirmasi juga ada di PDF §9.11 (terlewat saat baca awal, cuma fokus di §9.1).
-
-**Mapping yang benar sekarang:**
-| Konsep eSuite | Sumber Odoo | Alasan |
+| Entity eSuite | Sumber Odoo | Status |
 |---|---|---|
-| **Branch** (`/branches`) | `res.company` | Representasi lokasi/legal entity tingkat lebih tinggi (alamat, jam kerja) |
-| **Warehouse** (`/warehouse`) | `stock.warehouse` | Representasi gudang fisik, referensi ke Branch via `branches[].id` |
+| Branch (`/branches`) | `res.company`, filter `IN_SCOPE_COMPANY_NAMES` | ✅✅ Tervalidasi end-to-end |
+| Warehouse (`/warehouse`) | `stock.warehouse`, filter company in-scope | ✅✅ Tervalidasi end-to-end |
+| Product Category (`/product-category`) | `product.category`, filter `complete_name ilike "saleable"` | ✅✅ Tervalidasi |
+| Product (`/product`) | `product.product` | ✅✅ Tervalidasi end-to-end (731 produk, 30/31 Juli) — **tapi filter berubah 5 Agustus, lihat poin 7. Perlu re-run untuk hitung ulang jumlah produk yang sekarang ikut kekirim.** |
+| Customer | `res.partner`? (belum ditentukan) | Belum dikerjakan |
+| Pricelist | — | Belum, blocker RPC Odoo masih ada |
+| Customer Group / Salesman | — | Belum |
 
-**Konsekuensi:** `external_code` Branch berubah convention dari `ODOO-WH-*` → `ODOO-COMPANY-*`. 4 record lama (`ODOO-WH-1/3/5/6`) yang sempat ke-push minggu lalu (sebelum koreksi ini) sekarang "nyasar" di eSuite sandbox sebagai Branch yang salah kaprah — **dibiarkan saja** (sandbox, data buangan), tidak perlu dibersihkan.
+`external_code` convention lengkap ada di `CONFIG_NOTES.md`.
 
-## 7. URL & Kredensial — SUDAH DIDAPAT & TERVERIFIKASI LIVE
+## 7. Revisi Sesi Ini (5 Agustus 2026): Filter `free_qty` Dihapus dari Product Sync
 
-**PDF salah / usang.** PDF bilang sandbox = `https://openapistg.esuite.edot.id/v1/webhook` — ini **NXDOMAIN**, sempat didebug lama (dikira masalah DNS Docker/jaringan user, ternyata bukan — domain di dokumennya sendiri yang sudah tidak dipakai).
+**Keputusan bisnis baru:** produk dengan `free_qty = 0` **tetap disync & tetap tampil** di katalog eSuite. Sebelumnya (v6 dan sebelumnya) produk stok 0 di-exclude total dari `/sync/product`.
 
-**URL & kredensial REAL** (dari `eSuite-Webhook-DEV_postman_environment.json`, dikirim tim eSuite 29 Juli 2026):
-```
-ESUITE_BASE_URL=https://openapi-esuite.edot-dev.com/v1/webhook
-ESUITE_CLIENT_ID=6a6973780f67da70ae33824a
-ESUITE_CLIENT_SECRET=Password123!
-```
-**Sudah dites `GET /health` → sukses (`status: 200`).** Sudah diisi di `.env` user, sudah dikonfirmasi sinyal signing (Basic Auth + HMAC) di `esuite_client.py` match dengan pre-request script Postman collection — tidak perlu diubah.
+**Alasan:** `free_qty = 0` diasumsikan bisa berarti stok belum sempat diupdate di Odoo, atau produk masih proses produksi/replenishment -- bukan berarti produk tidak boleh ditawarkan. Sales tetap perlu bisa menawarkan produk itu ke customer (mis. untuk pre-order), jadi produk tidak boleh hilang dari katalog eSuite hanya gara-gara angka stok sesaat kosong.
 
-**Progres relasi dengan tim eSuite:** akses sandbox sudah dikasih 29 Juli 2026. **Sync teknis dijadwalkan Senin depan** dengan tim IT eSuite untuk bahas implementation flow — daftar pertanyaan sudah disiapkan (lihat poin 11).
+**Yang berubah di kode (`product_sync_service.py`):**
+- Baris filter `products = [p for p in products if (p.get("free_qty") or 0) > 0]` **dihapus**.
+- Pesan error saat list produk kosong disesuaikan (tidak lagi menyebut `free_qty > 0`).
+- Docstring di `odoo_client.py::get_products()` dan `api/routes/product.py` diupdate biar tidak menyesatkan (masih menyebut `free_qty>0` di versi lama).
 
-## 8. Mapping "Branch" ↔ Struktur Perusahaan Odoo — SUDAH DIJAWAB SEBAGIAN
+**Yang TIDAK berubah:**
+- Filter category Saleable tetap.
+- Filter `list_price > 0` (domain Odoo) tetap -- produk tanpa harga jual set masih di-exclude, itu beda topik dari stok.
+- Field `free_qty` tetap diambil dari Odoo query (masih relevan untuk entity **Stock Matrix** yang belum dikerjakan -- field `free_to_use` di sana tetap harus diisi dari `free_qty` Odoo apa adanya, termasuk kalau nilainya 0). Cuma tidak lagi dipakai sebagai syarat include/exclude di sync `/product`.
+- `CONFIG_NOTES.md` sudah diupdate sesi ini untuk mencerminkan aturan baru (bagian "Filter Data" & "Referensi eSuite untuk Entity Product").
 
-Nama 2 badan usaha in-scope (dari user, perlu divalidasi persis ke `res.company.name` di Odoo — kode pakai `ilike` biar toleran variasi format):
-- **Cahaya Boga Utama** (CV)
-- **Sunshine Food and Co** (CV)
+**Belum dilakukan (next step, lihat poin 12):** re-run `/sync/product` ke sandbox untuk lihat jumlah produk baru yang ikut kekirim (kemungkinan lebih dari 731), dan pastikan tidak ada error baru dari produk-produk stok 0 yang sebelumnya belum pernah lewat proses mapping/push (mis. UOM asing yang belum ada di `UOM_MAPPING`, atau category yang belum ke-resolve).
 
-Disimpan sebagai `IN_SCOPE_COMPANY_NAMES` di `core/scope.py` — single source of truth dipakai bareng oleh Branch & Warehouse service.
+## 8. Bug yang Sudah Diperbaiki Sesi-Sesi Lalu
 
-**Masih belum terjawab (bukan blocking lagi, tapi penting buat ditanya Senin):** apakah kredensial sandbox ini nanti di production tetap 1 pasang untuk kedua badan usaha, atau beda-beda? (Lihat daftar pertanyaan poin 11 no. 1-3.)
+**`product.category` di Odoo 19 tidak punya field `active`** -- domain filter `active=True` sudah dihapus dari `get_product_categories()`. Lihat `CONFIG_NOTES.md` bagian "Field Odoo yang Ternyata Beda dari Asumsi Umum".
 
-## 9. Urutan Pengembangan Entity
+## 9. Entity Product -- Status Saat Ini
 
-1. **Branch** — ✅ kode selesai (v4, source `res.company`). **Belum dites ulang** setelah koreksi mapping — TODO `ADMINISTRATIVE_AREA` di `branch_sync_service.py` masih kosong (province/city/district).
-2. **Warehouse** — ✅ **BARU**, kode selesai. Belum pernah dites sama sekali (nunggu Branch sukses dulu, karena butuh pull ID Branch).
-3. **Product** (+ Category, Brand, UOM, UOM Level) — belum dikerjakan.
-4. **Customer** — belum. Di sinilah reference-cache Postgres beneran mulai dibangun.
-5. **Pricelist** — belum. **Blocker belum selesai:** `_get_product_price()` diblokir RPC eksternal Odoo. Opsi A (custom addon wrapper, direkomendasikan) vs Opsi B (manual query, fragile).
-6. **Customer Group / Salesman** — belum, pelengkap.
+**Kode sudah lengkap & tervalidasi end-to-end**, TODO currency/product-type/UOM dari v6 semua sudah kelar (lihat `CONFIG_NOTES.md`). Satu-satunya perubahan tersisa adalah revisi filter `free_qty` di poin 7 di atas -- perlu re-test, bukan berarti mundur ke status "belum dites".
 
----
+## 10. File Konfigurasi: `CONFIG_NOTES.md`
 
-## 10. Progress Kode Saat Ini (`bridge_app_v3.zip` — nama file, isinya versi ke-4 iterasi)
+Tetap dipertahankan terpisah dari session transfer note (aturan bisnis TETAP vs riwayat sesi). Diupdate sesi ini untuk bagian filter Product. Dibundle 1 zip sejajar `app/`.
+
+## 11. Progress Kode Saat Ini (`bridge_app_v10.zip` -- berisi `app/` + `CONFIG_NOTES.md` sejajar)
 
 ```
 app/
-├── main.py                          # ✅ router branch + warehouse, exception handler
+├── main.py                              # router branch+warehouse+product_category+product
 ├── core/
-│   ├── config.py                    # ✅ ODOO_*, ESUITE_BASE_URL/CLIENT_ID/CLIENT_SECRET, API_KEY
-│   ├── exceptions.py                # ✅ + EsuiteConnectionError (nangkep DNS/timeout, bukan cuma HTTP error)
-│   ├── scope.py                     # ✅ BARU — IN_SCOPE_COMPANY_NAMES
-│   └── security.py                  # dari zip lama, tetap
+│   ├── config.py, exceptions.py, scope.py, security.py    # tidak berubah
 ├── clients/
-│   ├── odoo_client.py               # ✅ get_companies(names) [Branch] + get_warehouses(company_ids) [Warehouse, scoped]
-│   └── esuite_client.py             # ✅ push()/pull() + _safe_request() (nangkep ConnectionError/Timeout)
+│   ├── odoo_client.py                   # get_products() -- docstring diupdate (free_qty tidak lagi filter)
+│   └── esuite_client.py                 # tidak berubah
 ├── services/
-│   ├── branch_sync_service.py       # ✅ source res.company, external_code=ODOO-COMPANY-{id}, TODO admin area
-│   └── warehouse_sync_service.py    # ✅ BARU — pull /branches utk resolve ID, external_code=ODOO-WH-{id}
+│   ├── branch_sync_service.py           # ✅✅ tervalidasi
+│   ├── warehouse_sync_service.py        # ✅✅ tervalidasi
+│   ├── product_category_sync_service.py # ✅✅ tervalidasi
+│   └── product_sync_service.py          # ✅✅ tervalidasi, REVISI filter free_qty (5 Agustus 2026)
 └── api/routes/
-    ├── branch.py                    # ✅ POST /api/sync/branch?event=init|upsert
-    └── warehouse.py                 # ✅ BARU — POST /api/sync/warehouse?event=init|upsert
+    ├── branch.py, warehouse.py, product_category.py       # tervalidasi
+    └── product.py                       # docstring diupdate
+
+CONFIG_NOTES.md                          # sejajar app/, bukan di dalamnya -- diupdate sesi ini
 ```
 
 Semua lolos `python3 -m py_compile`.
 
-**Detail teknis penting:**
-- `OdooClient.get_companies(names)`: domain `name ilike` (OR antar nama), fields `id, name, partner_id`.
-- `OdooClient.get_warehouses(company_ids)`: domain `company_id in company_ids AND active=True`, fields `id, name, code, company_id`.
-- `WarehouseSyncService._resolve_branch_ids()`: pull `GET /branches`, cocokkan `external_code` (dicek 2 kemungkinan lokasi field — top-level ATAU nested `basic_info.external_code`, karena dokumen nggak jelas soal ini untuk response GET — **perlu divalidasi begitu dites beneran**).
-- Field Branch yang **belum** dimasukkan (sengaja, tunggu sandbox nolak dulu baru nambah sesuai errornya): `parent_branch`, `basic_info.sales_organization`, `basic_info.timezone`, `coverage`, `ework_setting`.
+## 12. TODO Berikutnya (urutan langsung lanjut)
+
+1. **Re-run `POST /api/sync/product?event=upsert`** ke sandbox, catat jumlah produk baru (bandingkan vs 731 sebelumnya) dan cek `payload_sent` untuk produk-produk yang sebelumnya ke-exclude karena stok 0 -- pastikan tidak ada error mapping baru (UOM asing / category belum ke-resolve).
+2. Kalau lancar, lanjut ke **Product Brand** & **UOM Level** kalau memang masih dibutuhkan (belum jelas apakah masih perlu -- perlu dicek apakah eSuite butuh `uom_levels` array/hierarki atau `base_uom` doang cukup).
+3. Baru lanjut ke **Customer**.
+4. Update `CONFIG_NOTES.md` tiap ada aturan bisnis baru -- terpisah dari update session transfer note.
+
+## 13. Daftar Pertanyaan Sync dengan Tim IT eSuite
+
+(Belum berubah dari v6 -- lihat isi lengkap di v6 kalau perlu.) Field opsional Branch, cara efisien dapetin kode wilayah administratif, beda `base_price`/`store_price` di Pricelist, NOO flow wajib/opsional, roadmap webhook vs polling, rate limit, retry safety, migrasi sandbox->production, field `parent` di Product Category/Brand.
+
+## 14. Referensi Dokumen & Kode Eksternal
+
+- Postman collection + environment DEV: prioritas utama.
+- PDF eSuite Synchronization v2.0.0: prioritas kedua.
+- Excel Master Data Go Live: referensi field saja.
+- Kode `searchProduct`/`product_services.py` dari project bridge Odoo↔Cekat AI milik user -- sebelumnya jadi referensi filter Saleable+free_qty. **Catatan:** bagian filter `free_qty` dari referensi itu TIDAK lagi diikuti di bridge eSuite ini sejak revisi 5 Agustus 2026 (poin 7) -- dua project ini sekarang beda aturan bisnis di titik ini, jangan disamakan lagi kalau nanti balik lihat kode referensi itu.
 
 ---
 
-## 11. Daftar Pertanyaan untuk Sync Teknis Senin dengan Tim IT eSuite
-
-**Arsitektur (paling penting):**
-1. Kredensial sandbox ini — di production nanti 1 pasang untuk semua, atau beda per badan usaha?
-2. Konsep "company" di eSuite (dedup key `X-Request-ID+entity+company`) — ditentukan dari kredensial yang dipakai, atau ada cara lain?
-3. 2 badan usaha kami — perlu 2 Branch terpisah, atau cukup 1 kalau memang 1 lokasi fisik?
-
-**Data & field:**
-4. Field `parent_branch`, `basic_info.sales_organization/timezone`, `ework_setting` di Branch — wajib dari awal atau boleh nyusul?
-5. Cara efisien dapetin kode wilayah administratif yang cocok buat lokasi kami — pull semua & cari manual, atau ada search by name?
-6. Pricelist: beda `base_price` vs `store_price` itu apa? Per customer group atau general per branch?
-
-**Flow & proses:**
-7. NOO flow — wajib di-handle dari awal, atau boleh di-skip (Odoo tetap satu-satunya sumber customer di fase awal)?
-8. Roadmap real-time sync — bakal ada webhook callback dari eSuite, atau tetap client yang polling?
-
-**Operasional:**
-9. Ada rate limit request per detik/menit yang perlu diperhatikan buat push batch besar?
-10. Retry pakai `X-Request-ID` yang sama pas network timeout — aman? Ada window waktu tertentu?
-11. Migrasi sandbox → production — perlu push ulang semua dari nol, atau ada mekanisme migrasi?
-
-**(Baru, dari sesi ini) Soal response GET:**
-12. Struktur response `GET /branches` (dan entity lain) — field `external_code` itu di top-level record atau nested di dalam objek tertentu (mis. `basic_info`)? Ini nentuin cara kita cocokkan record pull-back ke data Odoo kami.
-
----
-
-## 12. TODO Sebelum Test Ulang ke Sandbox
-
-1. **Isi `ADMINISTRATIVE_AREA`** di `branch_sync_service.py` (province/city/district — 3 baris kosong).
-2. **Test `POST /api/sync/branch?event=upsert`** dengan kode v4 (source sudah `res.company`, bukan `stock.warehouse` lagi).
-3. **Test `POST /api/sync/warehouse?event=upsert`** setelah Branch sukses — perhatikan apakah `_resolve_branch_ids()` berhasil cocokkan `external_code` dari hasil pull (poin 10, bagian yang masih perlu divalidasi).
-4. Kalau ada error field/format dari eSuite, kirim response mentahnya — field opsional (`parent_branch`, dll) ditambah sesuai kebutuhan nyata, bukan ditebak.
-5. Siapkan diri untuk sync Senin (poin 11) — bisa dibawa juga ke tim eSuite langsung sebagai agenda.
-
----
-
-## 13. Referensi Dokumen
-
-- `eSuite_Synchronization_Document_v2_0_0.pdf` (39 halaman) — **prioritas di bawah collection**, dipakai untuk detail field & required-fields table.
-- `eSuite-Webhook_postman_collection.json` + `eSuite-Webhook-DEV_postman_environment.json` — **prioritas utama**, sumber base_url, kredensial, & contoh payload yang sudah tervalidasi HMAC signing-nya (pre-request script-nya jadi acuan `esuite_client.py`).
-- `eDOT_Template_Master_Data_Go_Live__Cahaya_Boga_Utama.xlsx` — referensi field, bukan diparsing otomatis.
-
----
-
-## 14. Yang Perlu Dilakukan di Chat Baru (urutan langsung lanjut)
-
-1. Selesaikan TODO poin 12 di atas (isi kode wilayah, test Branch, test Warehouse).
-2. Kalau Branch & Warehouse sukses mulus, lanjut entity **Product**.
-3. Sebelum/sesudah sync Senin dengan tim eSuite, update catatan ini lagi dengan jawaban dari poin 11.
-
----
-
-**Cara pakai:** upload file ini + `bridge_app_v3.zip` (kode terbaru, sudah termasuk fix Branch/Warehouse) di chat baru, lalu lanjut dari poin 14.
+**Cara pakai:** upload file ini + `CONFIG_NOTES.md` (atau cukup `bridge_app_v10.zip` yang sudah membundle keduanya) di chat baru, lanjut dari poin 12.
