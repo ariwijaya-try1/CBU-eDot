@@ -148,7 +148,12 @@ class ProductSyncService:
                     "convertion": 1,
                 }
             ],
-            "cost": product.get("standard_price") or 0,
+            # "cost" SENGAJA TIDAK dikirim -- keputusan bisnis (instruksi boss,
+            # 6 Agustus 2026): data cost/harga beli tidak boleh ditampilkan/
+            # dikirim ke eSuite, cuma base_price (harga jual) yang boleh.
+            # Field standard_price tetap diambil dari Odoo (lihat
+            # odoo_client.py::get_products()) tapi sengaja tidak dipetakan ke
+            # payload. Lihat CONFIG_NOTES.md.
             "base_price": product.get("list_price") or 0,
             "currency": CURRENCY,
         }

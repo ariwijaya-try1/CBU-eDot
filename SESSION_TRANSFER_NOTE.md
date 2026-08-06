@@ -1,6 +1,6 @@
-# Session Transfer Note v8 — Odoo → eSuite Bridge
+# Session Transfer Note v7 — Odoo → eSuite Bridge
 
-> Diupdate 5 Agustus 2026. **Menggantikan v7.** Update sesi ini: perbaikan docstring salah di `api/routes/branch.py` (lihat poin 8). Tempel file ini di awal chat baru, bareng `CONFIG_NOTES.md`.
+> Dibuat 5 Agustus 2026. **Menggantikan v6.** Update: revisi aturan filter Product -- `free_qty > 0` DIHAPUS sebagai syarat exclude (produk stok 0 tetap disync). Tempel file ini di awal chat baru, bareng `CONFIG_NOTES.md`.
 >
 > **PENTING:** ada file kedua yang WAJIB dibaca bareng ini: **`CONFIG_NOTES.md`** (dibundle jadi 1 di dalam zip kode terbaru). File itu isinya aturan bisnis & konfigurasi PERMANEN (filter Saleable, currency, UOM, dll) yang beda fungsi dari catatan sesi ini — jangan diskip.
 
@@ -70,15 +70,28 @@ User upload Postman collection + environment DEV eSuite. Hasil cek (search strin
 
 **File Postman collection & environment sudah tersimpan** di `/home/claude/bridge/eSuite-Webhook_postman_collection.json` (working dir sesi ini) -- kalau chat baru, minta user upload ulang kalau perlu cross-check field lain.
 
+## 7c. Keputusan Bisnis Baru (6 Agustus 2026): No-Variant Dikonfirmasi + `cost` Dihapus dari Payload
+
+**1. Stock Matrix / `product_variant` blocker (dari poin 7b) -- dikonfirmasi user, bukan ditemukan pertama kali:**
+Tidak ada variant beneran secara praktek di operasional PT -- contoh: *Soft Dried Mango 500gr* vs *Soft Dried Mango 1x10x25gr (1 pack isi 10 pcs @ 25gr)* itu 2 produk terpisah, bukan 1 produk 2 varian. Keputusan lama (skip `/product-variant`) **dipertahankan secara eksplisit** -- kode variant **tidak akan dibuat**. Konsekuensi: blocker Stock Matrix (butuh `product_variant.id`) masih terbuka, perlu diselesaikan pakai cara lain nanti (cek ke IT eSuite / cek response `GET /product-variant` setelah produk di-push, siapa tau eSuite auto-generate 1 variant per product).
+
+**2. `cost` DIHAPUS dari payload Product (instruksi boss):**
+Data cost/harga beli **tidak boleh dikirim** ke eSuite -- cuma `base_price` (harga jual) yang boleh. **Ini konflik dengan keputusan sebelumnya** (cost dari `standard_price` sudah ada di kode & sempat tervalidasi di batch 1247 produk), tapi diterapkan langsung karena datang sebagai instruksi eksplisit, bukan ambigu.
+
+**Yang berubah di kode (`product_sync_service.py`):**
+- Key `"cost": product.get("standard_price") or 0` **dihapus** dari `_to_esuite_payload()`.
+- `standard_price` TETAP diambil dari query Odoo (`odoo_client.py::get_products()`, field list tidak diubah) -- cuma tidak lagi dipetakan ke payload eSuite. Kalau nanti dibutuhkan lagi, datanya sudah ada tanpa perlu ubah query.
+- `base_price` (dari `list_price`) sekarang **satu-satunya** field harga yang dikirim.
+
+**Status test:** payload sekarang sudah berubah 2x sejak validasi 1247 produk (tambah `purchase_uom`/`uom_levels`, lalu hapus `cost`) -- **belum ada re-test end-to-end** untuk bentuk payload final ini. Next TODO.
+
 ## 8. Bug yang Sudah Diperbaiki Sesi-Sesi Lalu
 
 **`product.category` di Odoo 19 tidak punya field `active`** -- domain filter `active=True` sudah dihapus dari `get_product_categories()`. Lihat `CONFIG_NOTES.md` bagian "Field Odoo yang Ternyata Beda dari Asumsi Umum".
 
-**Docstring salah di `api/routes/branch.py` (diperbaiki sesi ini, 5 Agustus 2026):** docstring endpoint `POST /sync/branch` sebelumnya menulis "Odoo (stock.warehouse)" — salah, karena Branch bersumber dari `res.company` (sesuai `branch_sync_service.py`), bukan `stock.warehouse` (itu sumber Warehouse). Kesalahan murni di teks dokumentasi/docstring, tidak pernah mempengaruhi logic (service-nya dari awal sudah benar pakai `self.odoo.get_companies(...)`). Sudah diperbaiki jadi "Odoo (res.company)".
-
 ## 9. Entity Product -- Status Saat Ini
 
-**Kode sudah lengkap & tervalidasi end-to-end**, TODO currency/product-type/UOM dari v6 semua sudah kelar (lihat `CONFIG_NOTES.md`). Satu-satunya perubahan tersisa adalah revisi filter `free_qty` di poin 7 di atas -- perlu re-test, bukan berarti mundur ke status "belum dites".
+**Kode lengkap, filter free_qty tervalidasi (1247 produk).** Tapi payload sudah 2x berubah setelah validasi itu (poin 7c) -- **belum end-to-end tested** untuk bentuk payload sekarang (`purchase_uom`+`uom_levels` ada, `cost` sudah tidak ada). Perlu re-run sebelum dianggap final/siap go-live.
 
 ## 10. File Konfigurasi: `CONFIG_NOTES.md`
 
@@ -98,7 +111,7 @@ app/
 │   ├── branch_sync_service.py           # ✅✅ tervalidasi
 │   ├── warehouse_sync_service.py        # ✅✅ tervalidasi
 │   ├── product_category_sync_service.py # ✅✅ tervalidasi
-│   └── product_sync_service.py          # ✅✅ tervalidasi (filter), 🟡 payload purchase_uom/uom_levels ditambahkan BELUM di-re-test
+│   └── product_sync_service.py          # ✅✅ tervalidasi (filter), 🟡 payload berubah 2x (purchase_uom/uom_levels ditambah, cost dihapus) -- BELUM di-re-test
 └── api/routes/
     ├── branch.py, warehouse.py, product_category.py       # tervalidasi
     └── product.py                       # docstring diupdate
@@ -110,12 +123,12 @@ Semua lolos `python3 -m py_compile`.
 
 ## 12. TODO Berikutnya (urutan langsung lanjut)
 
-1. ~~Re-run `/sync/product`, validasi filter `free_qty`~~ ✅ selesai (1247 produk, sukses).
-2. ~~Cek Product Brand & UOM Level~~ ✅ selesai -- keduanya di-skip (tidak dipakai eSuite), tapi ketemu `purchase_uom`/`uom_levels` yang seharusnya ada di payload Product & sudah ditambahkan ke kode.
-3. **Re-run `POST /api/sync/product?event=upsert` sekali lagi** ke sandbox untuk validasi payload baru (`purchase_uom` + `uom_levels`) -- pastikan eSuite terima tanpa error, cek `payload_sent` di response buat mastiin struktur `uom_levels` sesuai yang diharapkan eSuite.
-4. Flag ke tim data produk soal `base_price: 1` / `cost: 0` sebelum go-live (non-coding, lihat CONFIG_NOTES).
+1. ~~Re-run `/sync/product`, validasi filter `free_qty`~~ ✅ selesai (1247 produk, sukses -- tapi payload sudah berubah lagi setelahnya, lihat poin 3).
+2. ~~Cek Product Brand & UOM Level~~ ✅ selesai -- keduanya di-skip (tidak dipakai eSuite).
+3. **Re-run `POST /api/sync/product?event=upsert` sekali lagi** ke sandbox -- ini yang PALING PRIORITAS sekarang, karena payload sudah berubah 2x sejak test 1247 produk terakhir (tambah `purchase_uom`/`uom_levels`, hapus `cost`). Cek `payload_sent` di response buat mastiin: (a) `uom_levels` diterima eSuite tanpa error, (b) `base_price` tetap kekirim benar tanpa `cost`.
+4. Flag ke tim data produk soal `base_price: 1` sebelum go-live (non-coding, lihat CONFIG_NOTES -- `cost: 0` sudah tidak relevan lagi karena `cost` tidak dikirim).
 5. Lanjut ke **Customer** -- masih perlu ditentukan dulu sumber model Odoo-nya (`res.partner`? ada opsi lain?).
-6. **Ada temuan terbuka soal Stock Matrix vs `/product-variant`** (lihat CONFIG_NOTES bagian terkait) -- belum jadi TODO aktif, tapi perlu diingat sebelum mulai entity Stock Matrix.
+6. **Blocker Stock Matrix vs `/product-variant`** (lihat CONFIG_NOTES) -- keputusan no-variant sudah dikonfirmasi final, tapi cara teknis nyambungin Stock Matrix masih belum jelas. Perlu diselesaikan sebelum mulai entity Stock Matrix (bukan sekarang).
 7. Update `CONFIG_NOTES.md` tiap ada aturan bisnis baru -- terpisah dari update session transfer note.
 
 ## 13. Daftar Pertanyaan Sync dengan Tim IT eSuite

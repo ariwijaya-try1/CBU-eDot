@@ -10,7 +10,7 @@ def sync_branch(
     event: str = Query(default="upsert", pattern="^(init|upsert)$"),
 ):
     """
-    Trigger manual sync Branch: Odoo (res.company) -> eSuite.
+    Trigger manual sync Branch: Odoo (stock.warehouse) -> eSuite.
     event=init  : dipakai sekali di awal (seed pertama kali).
     event=upsert: dipakai untuk sync berikutnya (default).
     """
