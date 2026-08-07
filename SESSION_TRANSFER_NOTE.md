@@ -32,7 +32,7 @@ Postman collection + environment DEV > PDF.
 | Warehouse (`/warehouse`) | `stock.warehouse`, filter company in-scope | ✅✅ Tervalidasi end-to-end |
 | Product Category (`/product-category`) | `product.category`, filter `complete_name ilike "saleable"` | ✅✅ Tervalidasi |
 | Product (`/product`) | `product.product` | ✅✅ Filter tervalidasi (1247 produk, 5 Agustus). 🟡 `cost` dikirim eksplisit 0 tapi **UI eSuite masih nampilin nominal (bukan bug kode kita)** -- dugaan computed di sisi eSuite, belum dikonfirmasi. **Belum bisa dianggap selesai**, lihat poin 7c/9. |
-| Customer | `res.partner`? (belum ditentukan) | Belum dikerjakan |
+| Customer | `res.partner`, filter `customer_rank > 0` + `active=True` | 🟡 Kode dibuat (7 Agustus 2026), **belum pernah di-push ke sandbox**. |
 | Pricelist | — | Belum, blocker RPC Odoo masih ada |
 | Customer Group / Salesman | — | Belum |
 
@@ -109,10 +109,12 @@ Semua lolos `python3 -m py_compile`.
 
 ## 12. TODO Berikutnya (urutan langsung lanjut)
 
+0. **[STATUS: MENUNGGU VENDOR, JANGAN ACTION DULU]** `uom_levels[].id` sudah dites end-to-end 7 Agustus 2026 -- hasil **PARSIAL: ~110/1247 produk berhasil ter-update, sisanya belum**. Root cause belum jelas (dugaan: batching/rate-limit di sisi eSuite). User sudah lapor ke vendor eSuite, tunggu jawaban sebelum re-push atau ubah kode lagi. Lihat `CONFIG_NOTES.md` bagian `uom_levels[].id`.
+0b. **[BARU] Test end-to-end Customer** -- `POST /api/sync/customers` ke sandbox, cek `payload_sent` (`type` sudah "company"/"individual", bukan salah mapping) dan `esuite_response`. Belum pernah dites sama sekali. Lihat poin 15 di `CONFIG_NOTES.md` untuk keputusan & asumsi yang perlu diverifikasi (terutama soal company scope).
 1. **[PALING PRIORITAS] Re-run `POST /api/sync/product?event=upsert` lewat bridge ke sandbox** -- payload sekarang kirim `cost: 1` (bukan 0). Cek `payload_sent` mengandung `"cost": 1`, lalu cek UI eSuite berubah jadi `Rp 1` (bukan nominal lama). Kalau berhasil, **re-push seluruh produk** (bukan cuma yang baru ditest) supaya konsisten -- semua produk yang sempat ke-upsert dengan payload versi lama (tanpa cost / cost 0) masih punya cost lama di eSuite.
 1b. Tanya IT eSuite tetap jalan paralel (bukan blocking): apa cara resmi clear field numerik ke 0 (kalau nanti dijawab, ganti `1` -> cara resmi & re-push ulang lagi).
 2. Setelah root cause dikonfirmasi & fix yang benar ketemu: **re-push semua produk yang sempat ke-upsert dengan payload lama** (cost dihapus total / cost 0 yang ternyata belum fix) supaya konsisten.
-2b. **[OPEN] Konfirmasi field `uom_levels[].id`** -- cek `GET /product` untuk produk yang sudah pernah di-push, lihat apakah `uom_levels[].id` muncul di response (baru tau format ID yang benar & asalnya dari mana), atau tanya vendor apakah wajib di push pertama kali. Jangan ubah kode sebelum ini jelas -- lihat poin 7d.
+2b. **[✅ KODE SUDAH DIUBAH 7 Agustus 2026, BELUM DI-TEST END-TO-END] `uom_levels[].id`** -- dikonfirmasi mandatory dari `GET /api/debug/pull/product` real (produk hasil bridge tanpa `id` balik `uom_levels: []` kosong). User pilih pendekatan deterministik: `_generate_uom_level_id()` baru di `product_sync_service.py`, id = `sha1(external_code:uom_id)[:26].upper()`, stabil antar re-push. **Prioritas TODO berikutnya:** re-run `/sync/product` lewat bridge ke sandbox, cek `payload_sent` sekarang punya `uom_levels[0].id`, lalu `GET /product` produk itu buat konfirmasi `uom_levels` benar-benar tersimpan (tidak kosong lagi). Kalau sudah, test push 2x produk yang sama buat mastiin tidak numpuk. Detail di `CONFIG_NOTES.md`.
 2c. **[MENUNGGU USER]** Tunggu hasil validasi user soal "produk tidak bisa hard-delete, cuma inactive" -- belum ada aksi kode sampai dikonfirmasi. Lihat poin 7d.
 3. Flag ke tim data produk soal `base_price: 1` sebelum go-live (non-coding, lihat `CONFIG_NOTES.md`).
 4. Lanjut ke **Customer** -- masih perlu ditentukan dulu sumber model Odoo-nya (`res.partner`? ada opsi lain?).

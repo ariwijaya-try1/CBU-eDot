@@ -1,3 +1,5 @@
+import hashlib
+
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import ValidationError
@@ -115,6 +117,24 @@ class ProductSyncService:
             )
         return mapped
 
+    def _generate_uom_level_id(self, external_code: str, uom_id: str) -> str:
+        """
+        id untuk tiap item uom_levels[] -- WAJIB diisi. Dikonfirmasi 7 Agustus
+        2026 lewat GET /api/debug/pull/product (data production real, 1247
+        produk): tanpa id, eSuite terima push (status 200) tapi diam-diam
+        TIDAK menyimpan uom_levels sama sekali (balik uom_levels: [] kosong
+        saat di-GET lagi). Detail bukti & sisa pertanyaan terbuka (format id,
+        risiko duplikasi saat re-upsert) ada di CONFIG_NOTES.md.
+
+        Digenerate DETERMINISTIK (bukan random ULID) dari external_code+uom,
+        supaya id yang sama selalu keluar untuk kombinasi produk+uom yang
+        sama tiap kali di-upsert ulang -- menghindari kemungkinan uom_levels
+        numpuk/duplikat kalau eSuite ternyata append array alih-alih replace
+        (belum dites, jadi ini pendekatan aman/konservatif).
+        """
+        raw = f"{external_code}:{uom_id}"
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:26].upper()
+
     def _to_esuite_payload(self, product: dict, category_id_map: dict) -> dict:
         # categ_id & uom_id dari Odoo berbentuk [id, display_name] (many2one).
         categ = product.get("categ_id")
@@ -127,23 +147,29 @@ class ProductSyncService:
                 details={"odoo_categ_id": categ[0] if categ else None},
             )
 
+        external_code = f"ODOO-PROD-{product['id']}"
+        base_uom = self._resolve_uom(uom[1] if uom else "")
+
         return {
-            "external_code": f"ODOO-PROD-{product['id']}",
+            "external_code": external_code,
             "name": product["name"],
             "status": "active",
             "product_type": PRODUCT_TYPE,
             "product_category": {"id": category_esuite_id},
-            "base_uom": self._resolve_uom(uom[1] if uom else ""),
+            "base_uom": base_uom,
             # purchase_uom & uom_levels -- REVISI 5 Agustus 2026, ditambahkan setelah
             # dicek langsung ke Postman collection eSuite (contoh payload POST /product).
             # Odoo kami tidak punya konsep purchase UOM terpisah dari sales/base UOM,
             # dan tidak ada packaging multi-level (tiap ukuran = product.product id
             # sendiri, lihat CONFIG_NOTES.md), jadi keduanya diisi konsisten dari
             # base_uom yang sama -- 1 level, qty=1, convertion=1.
-            "purchase_uom": self._resolve_uom(uom[1] if uom else ""),
+            "purchase_uom": base_uom,
+            # "id" -- REVISI 7 Agustus 2026, lihat _generate_uom_level_id() di atas
+            # untuk alasan lengkap kenapa field ini ditambahkan & kenapa deterministik.
             "uom_levels": [
                 {
-                    "uom": self._resolve_uom(uom[1] if uom else ""),
+                    "id": self._generate_uom_level_id(external_code, base_uom["id"]),
+                    "uom": base_uom,
                     "qty": 1,
                     "convertion": 1,
                 }

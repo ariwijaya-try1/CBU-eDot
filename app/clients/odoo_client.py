@@ -143,6 +143,32 @@ class OdooClient:
         )
         return {r["id"]: r["name"] for r in records}
 
+    def get_customers(self):
+        """
+        Sumber data untuk entity Customer di eSuite.
+        Model: res.partner, difilter customer_rank > 0 (konvensi standar Odoo
+        untuk "kontak yang pernah/bisa jadi customer" -- dikonfirmasi user
+        7 Agustus 2026) + active = True (exclude kontak yang sudah diarsip,
+        konsisten dengan pola get_warehouses()).
+
+        company_type diambil MENTAH dari Odoo ("company"/"person") -- mapping
+        ke value eSuite ("company"/"individual") dilakukan di
+        customer_sync_service.py, BUKAN di sini, supaya odoo_client tetap
+        cuma baca data mentah tanpa logic transformasi bisnis.
+
+        Catatan (dari user): field Odoo yang benar untuk tipe customer itu
+        `company_type`, BUKAN `type` -- `res.partner.type` artinya jenis
+        alamat (invoice/delivery/dll), bukan tipe entitas customer.
+        """
+        domain = [[("customer_rank", ">", 0), ("active", "=", True)]]
+
+        return self._execute(
+            "res.partner",
+            "search_read",
+            domain,
+            {"fields": ["id", "name", "company_type"]},
+        )
+
     @staticmethod
     def _name_in_domain(names: list):
         """Bangun domain OR: name ilike names[0] OR name ilike names[1] OR ..."""

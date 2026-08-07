@@ -1,25 +1,18 @@
-from fastapi import APIRouter, Request, Query
-from app.core.limiter import limiter
-from app.services.customer_service import CustomerService
+from fastapi import APIRouter, Query
+from app.services.customer_sync_service import CustomerSyncService
 
 router = APIRouter()
-service = CustomerService()
+service = CustomerSyncService()
 
 
-@router.get("/customers")
-@limiter.limit("20/minute")
-def get_customers(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=10, ge=1, le=100),
+@router.post("/sync/customers")
+def sync_customers(
+    event: str = Query(default="upsert", pattern="^(init|upsert)$"),
 ):
-    return service.get_customers(page=page, limit=limit)
-
-
-@router.get("/customers/search")
-@limiter.limit("20/minute")
-def search_customers(
-    request: Request,
-    keyword: str = Query(min_length=2, max_length=50),
-):
-    return service.search_customers(keyword)
+    """
+    Trigger manual sync Customer: Odoo (res.partner, customer_rank > 0) -> eSuite.
+    Field `type` di payload eSuite dipetakan dari `company_type` Odoo
+    ("company" -> "company", "person" -> "individual") -- BUKAN dari
+    `res.partner.type` (itu jenis alamat, bukan tipe customer).
+    """
+    return service.sync(event=event)
