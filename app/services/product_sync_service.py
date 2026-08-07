@@ -148,19 +148,23 @@ class ProductSyncService:
                     "convertion": 1,
                 }
             ],
-            # "cost" dikirim sebagai 0 fixed -- BUKAN dari standard_price
+            # "cost" dikirim sebagai 1 (Rp 1) fixed -- BUKAN dari standard_price
             # (instruksi boss, 6 Agustus 2026: data cost/harga beli asli tidak
             # boleh dikirim ke eSuite, cuma base_price/harga jual yang boleh).
-            # Direvisi 6 Agustus 2026 (poin 7c catch-up): key ini sempat DIHAPUS
-            # total dari payload, tapi eSuite upsert ternyata partial-merge --
-            # produk yang sebelumnya sudah punya cost (dari batch 1247 sebelum
-            # revisi ini) tetap menampilkan nominal lama di UI karena key yang
-            # tidak dikirim tidak dianggap "clear ke 0" oleh eSuite. Fix: kirim
-            # eksplisit 0 supaya value lama ke-overwrite, tanpa membocorkan
-            # standard_price asli. Field standard_price tetap diambil dari Odoo
+            # Riwayat revisi field ini (semua 6 Agustus 2026):
+            #   1) key dihapus total dari payload -> value lama nyangkut di UI.
+            #   2) diganti kirim eksplisit 0 -> TETAP nyangkut, ternyata eSuite
+            #      treat 0 sebagai falsy dan skip update (bug backend eSuite,
+            #      dikonfirmasi via test manual: cost=1 -> UI berubah,
+            #      cost=0 -> UI tidak berubah sama sekali).
+            #   3) (sekarang) pakai 1 sebagai sentinel -- bukan nilai cost asli,
+            #      cuma workaround supaya bukan falsy dan benar-benar ke-apply.
+            #      Efeknya di UI eSuite: "Rp 1", bukan "Rp 0" -- disepakati user
+            #      sebagai kompromi sampai IT eSuite kasih cara resmi clear ke 0.
+            # Field standard_price tetap diambil dari Odoo
             # (odoo_client.py::get_products()) tapi tidak pernah dipetakan ke
             # sini. Lihat CONFIG_NOTES.md.
-            "cost": 0,
+            "cost": 1,
             "base_price": product.get("list_price") or 0,
             "currency": CURRENCY,
         }
