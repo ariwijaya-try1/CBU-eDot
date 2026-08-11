@@ -49,6 +49,8 @@ Dua-duanya produk "sama" secara nama dasar, tapi punya `id` Odoo masing-masing.
 - **Tidak difilter company scope** (`IN_SCOPE_COMPANY_NAMES`) -- mengikuti pola Product (juga tidak difilter company), bukan pola Branch/Warehouse. **Ini asumsi minimal, belum eksplisit dikonfirmasi user** -- kalau ternyata customer perlu dipisah per company/badan usaha, perlu direvisi.
 - Skema payload eSuite `/customers` yang tersedia di Postman collection **minim** (cuma `name`, `external_code`, `type`, `status`, `currency` -- tidak ada contoh lengkap kayak Product). Field lain (customer_group, salesman_division, alamat, dll) **belum dipetakan** -- kalau nanti dashboard eSuite butuh itu, perlu revisit skema.
 
+**✅ Fix root cause gagal upsert customer (11 Agustus 2026, dari revisi payload vendor):** payload `/customers` butuh field **`entity_type: "customer"`** (fixed value, bukan dari Odoo) yang sebelumnya tidak kita kirim -- ini konfirmasi resmi vendor lewat revisi payload mereka, bukan dugaan. Sudah ditambahkan ke `customer_sync_service.py::_to_esuite_payload()`. **Belum di-re-test end-to-end lewat bridge** setelah fix ini -- next step: re-push customer (mulai `limit` kecil) dan verifikasi lewat `GET /api/debug/pull/customers` (atau entity path yang sesuai).
+
 **File:** `app/clients/odoo_client.py::get_customers()` (baru), `app/services/customer_sync_service.py` (baru), `app/api/routes/customer.py` (baru), `app/main.py` (router didaftarkan).
 
 **Status: belum pernah di-push ke sandbox.** Lolos `py_compile` saja. TODO test ada di `SESSION_TRANSFER_NOTE.md` poin 12.

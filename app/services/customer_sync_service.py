@@ -70,4 +70,8 @@ class CustomerSyncService:
             "type": self._resolve_customer_type(customer.get("company_type")),
             "status": "active",
             "currency": CURRENCY,
+            # entity_type -- WAJIB, ditambahkan 11 Agustus 2026 setelah revisi
+            # payload dari vendor eSuite (root cause gagal upsert customer).
+            # Fixed "customer" untuk semua record entity ini (bukan dari Odoo).
+            "entity_type": "customer",
         }
