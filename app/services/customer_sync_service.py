@@ -22,17 +22,31 @@ class CustomerSyncService:
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert"):
+    def sync(self, event: str = "upsert", limit: int | None = None):
         customers = self.odoo.get_customers()
 
         if not customers:
             raise ValidationError("Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo")
+
+        total_matched = len(customers)
+
+        # limit -- TEMPORARY diagnostic aid (7 Agustus 2026), BUKAN fitur bisnis
+        # permanen. Ditambahkan buat isolasi root cause 502 Bad Gateway dari
+        # eSuite saat push full batch customer (lihat SESSION_TRANSFER_NOTE.md):
+        # test manual 1 record via Postman sukses, push full batch via bridge
+        # 502 dua kali berturut-turut. limit memungkinkan test bertahap
+        # (5, 50, 500 record, dst) buat cari tau apakah soal jumlah record
+        # atau soal isi data tertentu, tanpa perlu ubah kode tiap kali coba.
+        # Default None -> behavior sama seperti sebelumnya (semua customer).
+        if limit is not None:
+            customers = customers[:limit]
 
         payload = [self._to_esuite_payload(c) for c in customers]
         esuite_result = self.esuite.push("customers", event=event, data=payload)
 
         return {
             "synced_count": len(payload),
+            "total_matched_in_odoo": total_matched,
             "external_codes": [item["external_code"] for item in payload],
             "payload_sent": payload,
             "esuite_response": esuite_result,

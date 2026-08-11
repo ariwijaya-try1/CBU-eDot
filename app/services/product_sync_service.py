@@ -30,7 +30,7 @@ class ProductSyncService:
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert"):
+    def sync(self, event: str = "upsert", limit: int | None = None):
         products = self.odoo.get_products()
 
         # REVISI 5 Agustus 2026: filter free_qty > 0 DIHAPUS dari sini.
@@ -47,6 +47,16 @@ class ProductSyncService:
         if not products:
             raise ValidationError("Tidak ada produk Saleable ditemukan di Odoo")
 
+        total_matched = len(products)
+
+        # limit -- TEMPORARY diagnostic aid (7 Agustus 2026), pola sama persis
+        # dengan customer_sync_service.py (lihat komentar di sana untuk
+        # konteks lengkap: dipakai buat isolasi bertahap kalau ada masalah
+        # push full batch, mis. 502 Bad Gateway). Default None -> behavior
+        # sama seperti sebelumnya (semua produk).
+        if limit is not None:
+            products = products[:limit]
+
         category_id_map = self._resolve_category_ids(products)
 
         payload = [self._to_esuite_payload(p, category_id_map) for p in products]
@@ -54,6 +64,7 @@ class ProductSyncService:
 
         return {
             "synced_count": len(payload),
+            "total_matched_in_odoo": total_matched,
             "external_codes": [item["external_code"] for item in payload],
             "payload_sent": payload,
             "esuite_response": esuite_result,
