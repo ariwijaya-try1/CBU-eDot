@@ -1,27 +1,25 @@
-import hashlib
-
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import ValidationError
 
 # Referensi eSuite yang diisi manual (mirip ADMINISTRATIVE_AREA di Branch) --
 # nilai-nilai ini TIDAK datang dari Odoo, itu master data milik eSuite sendiri.
-# Cara isi: GET /currency dan GET /product-type ke sandbox, cari baris yang
-# cocok, copy id-nya ke sini.
-#
-# TODO: isi ID sebelum push dites ke sandbox.
 CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
-PRODUCT_TYPE = {"id": "664191ad236dfcd5a4000001"}  # "Storable Product" (PD-003), dari GET /product-type
+PRODUCT_TYPE = {
+    "id": "664191ad236dfcd5a4000001"
+}  # "Storable Product" (PD-003), dari GET /product-type
 
 # Mapping UOM: key = nama uom_id di Odoo (di-lowercase), value = id eSuite.
-# TODO: isi persis nama UOM yang keluar dari Odoo (lihat payload_sent hasil
-# test pertama untuk tau nama aslinya -- jangan tebak dari nama produk),
-# lalu isi id eSuite dari hasil GET /uom.
+# TERKONFIRMASI & SELESAI (5-7 Agustus 2026): cuma "units" & "kg" yang dipakai
+# di seluruh 731 produk Saleable -- "pcs"/"pack" (dugaan awal diskusi bisnis)
+# TIDAK dipakai literal sebagai uom_id di Odoo. Kedua id di bawah sudah
+# divalidasi cocok persis terhadap GET /uom eSuite (26 UOM master, dicek
+# 7 Agustus 2026) -- tidak ada entity "Pieces"/"Pack" sama sekali di sana,
+# jadi kalaupun nanti Odoo ternyata pakai istilah itu, perlu tanya vendor dulu
+# mau dipetakan ke UOM eSuite yang mana (bukan sekadar isi ID yang belum ada).
 UOM_MAPPING = {
-    "units": {"id": "664219e2236dfcd5a400001a"},  # UM-0001, dari GET /uom
-    "kg": {"id": "664219e2236dfcd5a4000015"},  # Kilogram / UM-0006, dari GET /uom
-    "pcs": {"id": ""},
-    "pack": {"id": ""},
+    "units": {"id": "664219e2236dfcd5a400001a"},  # UM-0001 "Units", dari GET /uom
+    "kg": {"id": "664219e2236dfcd5a4000015"},  # UM-0006 "Kilogram", dari GET /uom
 }
 
 
@@ -124,27 +122,12 @@ class ProductSyncService:
         if not mapped or not mapped.get("id"):
             raise ValidationError(
                 f"UOM Odoo '{uom_name}' belum ada mapping-nya di UOM_MAPPING",
-                details={"odoo_uom_name": uom_name, "known_mappings": list(UOM_MAPPING.keys())},
+                details={
+                    "odoo_uom_name": uom_name,
+                    "known_mappings": list(UOM_MAPPING.keys()),
+                },
             )
         return mapped
-
-    def _generate_uom_level_id(self, external_code: str, uom_id: str) -> str:
-        """
-        id untuk tiap item uom_levels[] -- WAJIB diisi. Dikonfirmasi 7 Agustus
-        2026 lewat GET /api/debug/pull/product (data production real, 1247
-        produk): tanpa id, eSuite terima push (status 200) tapi diam-diam
-        TIDAK menyimpan uom_levels sama sekali (balik uom_levels: [] kosong
-        saat di-GET lagi). Detail bukti & sisa pertanyaan terbuka (format id,
-        risiko duplikasi saat re-upsert) ada di CONFIG_NOTES.md.
-
-        Digenerate DETERMINISTIK (bukan random ULID) dari external_code+uom,
-        supaya id yang sama selalu keluar untuk kombinasi produk+uom yang
-        sama tiap kali di-upsert ulang -- menghindari kemungkinan uom_levels
-        numpuk/duplikat kalau eSuite ternyata append array alih-alih replace
-        (belum dites, jadi ini pendekatan aman/konservatif).
-        """
-        raw = f"{external_code}:{uom_id}"
-        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:26].upper()
 
     def _to_esuite_payload(self, product: dict, category_id_map: dict) -> dict:
         # categ_id & uom_id dari Odoo berbentuk [id, display_name] (many2one).
@@ -175,11 +158,18 @@ class ProductSyncService:
             # sendiri, lihat CONFIG_NOTES.md), jadi keduanya diisi konsisten dari
             # base_uom yang sama -- 1 level, qty=1, convertion=1.
             "purchase_uom": base_uom,
-            # "id" -- REVISI 7 Agustus 2026, lihat _generate_uom_level_id() di atas
-            # untuk alasan lengkap kenapa field ini ditambahkan & kenapa deterministik.
+            # "id" -- REVISI 11 Agustus 2026: keputusan sha1-generate (7 Agustus)
+            # DIANULIR. Vendor eSuite konfirmasi lewat test manual: id hasil
+            # generate sendiri (hash) dibaca sistem mereka sebagai id asing/tidak
+            # dikenal ("id Odoo-nya Cahaya Boga, bukan id eSuite") -- efeknya
+            # BUKAN cuma uom_levels gagal simpan, tapi seluruh update produk itu
+            # (termasuk cost) ikut gagal ter-apply walau response tetap 200.
+            # Ini kemungkinan besar root cause kasus "110/1247 partial update".
+            # Fix: id disamakan dengan uom.id (id UOM master eSuite asli, dari
+            # GET /uom vendor) -- bukan bikin id baru sendiri. Lihat CONFIG_NOTES.md.
             "uom_levels": [
                 {
-                    "id": self._generate_uom_level_id(external_code, base_uom["id"]),
+                    "id": base_uom["id"],
                     "uom": base_uom,
                     "qty": 1,
                     "convertion": 1,
@@ -198,6 +188,15 @@ class ProductSyncService:
             #      cuma workaround supaya bukan falsy dan benar-benar ke-apply.
             #      Efeknya di UI eSuite: "Rp 1", bukan "Rp 0" -- disepakati user
             #      sebagai kompromi sampai IT eSuite kasih cara resmi clear ke 0.
+            #   4) (11 Agustus 2026) TEMUAN BARU, BELUM ACTION: update cost ke 0
+            #      lewat UI dashboard eSuite BERHASIL -- jadi falsy-skip ini
+            #      kemungkinan besar bug spesifik di endpoint API, bukan
+            #      keterbatasan sistem eSuite secara umum. Sudah dilaporkan ke
+            #      vendor (masih 1 laporan lagi terkait uom_levels.id di atas
+            #      yang juga lagi ditunggu). JANGAN ganti "cost": 1 -> 0 di sini
+            #      sampai ada konfirmasi endpoint sudah benar (kemungkinan
+            #      root cause-nya sama dengan uom_levels.id di atas -- payload
+            #      lama ikut gagal ter-apply gara-gara id yang salah).
             # Field standard_price tetap diambil dari Odoo
             # (odoo_client.py::get_products()) tapi tidak pernah dipetakan ke
             # sini. Lihat CONFIG_NOTES.md.

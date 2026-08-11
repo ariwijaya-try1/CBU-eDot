@@ -1,0 +1,163 @@
+{
+  "info": {
+    "name": "Odoo-eSuite Bridge (Internal API)",
+    "description": "Endpoint bridge kita sendiri (FastAPI) -- beda dari Postman collection eSuite punya vendor. Auth pakai header x-api-key (lihat environment).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "x-api-key", "type": "string" },
+      { "key": "value", "value": "{{api_key}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "{{base_url}}" }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""] }
+      }
+    },
+    {
+      "name": "Sync",
+      "item": [
+        {
+          "name": "Sync Branch",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/sync/branch?event=upsert",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sync", "branch"],
+              "query": [
+                { "key": "event", "value": "upsert", "description": "init | upsert" }
+              ]
+            },
+            "description": "Odoo res.company -> eSuite /branches"
+          }
+        },
+        {
+          "name": "Sync Warehouse",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/sync/warehouse?event=upsert",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sync", "warehouse"],
+              "query": [
+                { "key": "event", "value": "upsert", "description": "init | upsert" }
+              ]
+            },
+            "description": "Odoo stock.warehouse -> eSuite /warehouse. Butuh Branch sudah di-push duluan."
+          }
+        },
+        {
+          "name": "Sync Product Category",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/sync/product-category?event=upsert",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sync", "product-category"],
+              "query": [
+                { "key": "event", "value": "upsert", "description": "init | upsert" }
+              ]
+            },
+            "description": "Odoo product.category (filter Saleable) -> eSuite /product-category"
+          }
+        },
+        {
+          "name": "Sync Product",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/sync/product?event=upsert&limit=5",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sync", "product"],
+              "query": [
+                { "key": "event", "value": "upsert", "description": "init | upsert" },
+                { "key": "limit", "value": "5", "description": "opsional, diagnostik -- kosongkan buat semua produk (1247)" }
+              ]
+            },
+            "description": "Odoo product.product (Saleable, list_price>0) -> eSuite /product. Butuh Product Category sudah di-push duluan."
+          }
+        },
+        {
+          "name": "Sync Customers",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/sync/customers?event=upsert&limit=5",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sync", "customers"],
+              "query": [
+                { "key": "event", "value": "upsert", "description": "init | upsert" },
+                { "key": "limit", "value": "5", "description": "opsional, diagnostik 502 -- kosongkan buat semua customer" }
+              ]
+            },
+            "description": "Odoo res.partner (customer_rank > 0) -> eSuite /customers. Belum pernah full-push ke sandbox (lihat CONFIG_NOTES.md)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Debug (Pull eSuite Reference Data)",
+      "item": [
+        {
+          "name": "Pull Currency",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/debug/pull/currency?page=1&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "debug", "pull", "currency"],
+              "query": [ { "key": "page", "value": "1" }, { "key": "limit", "value": "50" } ]
+            }
+          }
+        },
+        {
+          "name": "Pull Product Type",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/debug/pull/product-type?page=1&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "debug", "pull", "product-type"],
+              "query": [ { "key": "page", "value": "1" }, { "key": "limit", "value": "50" } ]
+            }
+          }
+        },
+        {
+          "name": "Pull UOM",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/debug/pull/uom?page=1&limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["api", "debug", "pull", "uom"],
+              "query": [ { "key": "page", "value": "1" }, { "key": "limit", "value": "100" } ]
+            }
+          }
+        },
+        {
+          "name": "Pull Product (generic, ubah entity_path sesuai kebutuhan)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/debug/pull/product?page=1&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "debug", "pull", "product"],
+              "query": [ { "key": "page", "value": "1" }, { "key": "limit", "value": "50" } ]
+            },
+            "description": "entity_path fleksibel -- ganti 'product' dengan entity eSuite lain (branches, warehouse, product-category, customers, dll)"
+          }
+        }
+      ]
+    }
+  ]
+}
