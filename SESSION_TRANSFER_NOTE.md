@@ -32,7 +32,7 @@ Postman collection + environment DEV > PDF.
 | Warehouse (`/warehouse`) | `stock.warehouse`, filter company in-scope | ✅✅ Tervalidasi end-to-end |
 | Product Category (`/product-category`) | `product.category`, filter `complete_name ilike "saleable"` | ✅✅ Tervalidasi |
 | Product (`/product`) | `product.product` | ✅✅ Filter tervalidasi (1247 produk, 5 Agustus). 🟡 `cost` dikirim eksplisit 0 tapi **UI eSuite masih nampilin nominal (bukan bug kode kita)** -- dugaan computed di sisi eSuite, belum dikonfirmasi. **Belum bisa dianggap selesai**, lihat poin 7c/9. |
-| Customer | `res.partner`, filter `customer_rank > 0` + `active=True` | 🟡 Kode dibuat (7 Agustus 2026), **belum pernah di-push ke sandbox**. |
+| Customer | `res.partner`, filter `customer_rank > 0` + `active=True` | 🟡 `entity_type` fix + batching (default 1000/batch) sudah diterapkan (11 Agustus 2026). Full push 3038 record sukses (delay awal cuma soal async processing eSuite, sudah beres). Belum dianggap "selesai" penuh karena belum ada reconciliation test end-to-end. |
 | Pricelist | — | Belum, blocker RPC Odoo masih ada |
 | Customer Group / Salesman | — | Belum |
 
@@ -109,16 +109,18 @@ Semua lolos `python3 -m py_compile`.
 
 ## 12. TODO Berikutnya (urutan langsung lanjut)
 
-0. **[✅ ROOT CAUSE DITEMUKAN & KODE DIUBAH 11 Agustus 2026, BELUM DI-TEST END-TO-END]** Kasus "110/1247 partial" (7 Agustus) ternyata BUKAN soal batching/rate-limit -- vendor konfirmasi lewat test manual mereka: `uom_levels[].id` hasil sha1-generate kita dibaca sebagai id asing/tidak dikenal eSuite, dan itu bikin seluruh update produk (termasuk `cost`) gagal ter-apply walau response 200. Fix: `id` disamakan dengan `uom.id` (id UOM master eSuite asli dari `GET /uom`). **Prioritas TODO berikutnya: re-run `/sync/product` lewat bridge (mulai dari `limit` kecil dulu), cek `payload_sent`, lalu `GET /product` buat pastikan `uom_levels` tersimpan DAN `cost` ikut ter-apply.** Detail di `CONFIG_NOTES.md` bagian `uom_levels[].id`.
-0b. **[BARU, MENUNGGU VENDOR]** Update `cost` ke `0` masih gagal lewat endpoint API (Swagger/Postman), tapi berhasil lewat UI dashboard eSuite -- dilaporkan ke vendor, kemungkinan root cause sama dengan poin 0 di atas. **Jangan ganti `"cost": 1` -> `0` di kode sampai ada jawaban vendor / endpoint sudah ke-verify benar.**
-0b. **[STATUS: 502 sebelumnya, tapi `limit=5/50/500` semua SUKSES]** Belum ketemu titik pasti kegagalannya (kemungkinan >500, atau transient). Next: coba `limit` lebih besar (800/1000) atau full lagi. Param `limit` yang sama juga sudah ditambahkan ke `/sync/product` buat konsistensi diagnostik. Detail di `CONFIG_NOTES.md` poin 15.
-1. **[PALING PRIORITAS] Re-run `POST /api/sync/product?event=upsert` lewat bridge ke sandbox** -- payload sekarang kirim `cost: 1` (bukan 0). Cek `payload_sent` mengandung `"cost": 1`, lalu cek UI eSuite berubah jadi `Rp 1` (bukan nominal lama). Kalau berhasil, **re-push seluruh produk** (bukan cuma yang baru ditest) supaya konsisten -- semua produk yang sempat ke-upsert dengan payload versi lama (tanpa cost / cost 0) masih punya cost lama di eSuite.
-1b. Tanya IT eSuite tetap jalan paralel (bukan blocking): apa cara resmi clear field numerik ke 0 (kalau nanti dijawab, ganti `1` -> cara resmi & re-push ulang lagi).
+0. **[⚠️ ROOT CAUSE `cost` TERISOLASI 12 Agustus 2026 -- `uom_levels` sudah terbukti benar, `cost` masih gagal sendiri]** Test manual (Level id "Low" valid) terbukti berhasil update `uom_levels` (dikonfirmasi via `GET /product`), tapi `cost` tetap `0`, bukan nilai yang dikirim. Jadi bug sekarang murni soal `cost`, bukan lagi `uom_levels[].id`. **Belum ada root cause/fix** -- next step tergantung jawaban vendor. Detail di `CONFIG_NOTES.md`.
+0e. **[BARU, BELUM DILAPORKAN]** Produk BARU (`ODOO-PROD-18374-test`) gagal tersimpan TOTAL (tidak ada di `GET /product` sama sekali, walau response 200) -- bug terpisah dari poin 0, belum ada dugaan penyebab.
+0f. **[🚨 PRIORITAS BISNIS, BUKAN CUMA TEKNIS]** 1138/1250 produk (91%) di eSuite masih tampilkan `cost` asli (belum ke-mask) -- kontradiksi instruksi awal "cost tidak boleh disclose". Perlu di-flag ke tim/atasan soal timeline go-live, independen dari kapan bug teknis `cost` API selesai.
+0b. **[✅ SELESAI 11 Agustus 2026]** Bulk upsert Customer (3038 record, batch_size=500) -- UI dashboard sempat cuma nunjukin 2002 pas awal dicek. **Dikonfirmasi vendor: eSuite proses upsert secara asynchronous** (response 200 = diterima ke antrian, bukan langsung tersimpan; worker proses belakangan). Bukan bug -- cuma delay pemrosesan. Semua 3038 sudah masuk sekarang. **Insight buat ke depan:** response 200 dari eSuite endpoint manapun tidak bisa langsung dianggap final buat volume besar -- kasih jeda / retry pull kalau perlu verifikasi cepat.
+0c. **[✅ FIX DITERAPKAN 11 Agustus 2026]** Root cause gagal upsert Customer (beda dari 0b -- ini soal payload, bukan volume): field `entity_type: "customer"` wajib, sebelumnya tidak dikirim. Dikonfirmasi resmi lewat revisi payload vendor. Sudah ditambahkan ke `customer_sync_service.py`.
+0d. **[✅ DITERAPKAN 11 Agustus 2026]** Push Customer sekarang selalu per-batch (default 1000/batch, bisa di-override lewat query param `batch_size`) -- root cause 502 di atas ~2000 record dalam 1 request dikonfirmasi user. Gagal di 1 batch tidak menggagalkan batch lain.
+1. **[PALING PRIORITAS, lihat poin 0]** Root cause `cost` API sekarang terisolasi (bukan lagi soal `uom_levels`). Perlu lapor ke vendor dengan bukti konkret: payload lengkap test (Level id "Low" valid, `cost: 13344`) + hasil `GET /product` yang nunjukin `uom_levels` berhasil tapi `cost` tetap `0`. Tunggu jawaban vendor soal ini sebelum ubah kode.
+1b. Tanya IT eSuite tetap jalan paralel (bukan blocking): apa cara resmi clear field numerik ke 0 (kalau nanti dijawab, ganti `1` -> `0` & re-push ulang lagi). Juga masih pending: update `cost` ke `0` gagal lewat endpoint API tapi berhasil lewat UI dashboard (lihat `CONFIG_NOTES.md` Tahap 7) -- kemungkinan root cause sama dengan poin 0.
 2. Setelah root cause dikonfirmasi & fix yang benar ketemu: **re-push semua produk yang sempat ke-upsert dengan payload lama** (cost dihapus total / cost 0 yang ternyata belum fix) supaya konsisten.
-2b. **[❌ DIANULIR 11 Agustus 2026, lihat poin 0 di atas]** Pendekatan sha1-generate (`_generate_uom_level_id()`) sudah dihapus dari kode, diganti `uom_levels[].id = base_uom["id"]`.
 2c. **[MENUNGGU USER]** Tunggu hasil validasi user soal "produk tidak bisa hard-delete, cuma inactive" -- belum ada aksi kode sampai dikonfirmasi. Lihat poin 7d.
 3. Flag ke tim data produk soal `base_price: 1` sebelum go-live (non-coding, lihat `CONFIG_NOTES.md`).
-4. Lanjut ke **Customer** -- masih perlu ditentukan dulu sumber model Odoo-nya (`res.partner`? ada opsi lain?).
+4. **Customer** -- source model (`res.partner`), `entity_type` fix, & batching sudah selesai (lihat 0b/0c/0d). Belum ada full end-to-end reconciliation test (pull balik semua & diff external_code) -- opsional, cuma kalau ada indikasi masalah lagi.
 5. **Blocker Stock Matrix vs `/product-variant`** -- no-variant sudah final, cara teknis nyambungin Stock Matrix masih belum jelas. Belum sekarang.
 6. Update `CONFIG_NOTES.md` tiap ada aturan bisnis baru -- terpisah dari session transfer note.
 
@@ -135,7 +137,31 @@ Semua lolos `python3 -m py_compile`.
 - PDF eSuite Synchronization v2.0.0: prioritas kedua.
 - Excel Master Data Go Live: referensi field saja.
 - Kode `searchProduct`/`product_services.py` dari project bridge Odoo↔Cekat AI milik user -- filter `free_qty` dari referensi itu **tidak lagi diikuti** di bridge eSuite ini sejak 5 Agustus 2026.
+- **BARU (12 Agustus 2026):** `https://edot.gitbook.io/knowledge-base-edot` -- Knowledge Base eDOT resmi (dashboard/UI level, bahasa Indonesia). **Bisa diakses langsung oleh AI** (support markdown per-halaman lewat suffix `.md`, dan endpoint tanya-jawab `?ask=<pertanyaan>` di halaman manapun). **Beda scope dari PDF Sync Document**: gitbook ini dokumentasi UI/dashboard eSuite (definisi tabel, cara pakai fitur), PDF Sync Document tetap acuan utama untuk struktur payload webhook API. Dipakai sesi ini buat riset relasi antar entitas (lihat poin 15).
+
+## 15. Housekeeping & Riset Paralel (12 Agustus 2026, sesi akun Pro kantor -- migrasi dari akun free pribadi)
+
+- **File duplikat dihapus:** `eSuite-Webhook.postman_collection.json` (titik) dihapus -- identik byte-for-byte (`diff` = 0 baris beda) dengan `eSuite-Webhook_postman_collection.json` (underscore) yang tetap dipertahankan karena itu yang direferensikan di `CONFIG_NOTES.md`.
+- **Nama project (sementara):** user menamai app bridge ini **`eDot_cbu_fastapi`** (CBU = Cahaya Boga Utama, nama kantor). Belum ada perubahan kode/folder/docker terkait penamaan ini -- baru penamaan referensi.
+- **Riset paralel (BUKAN blocking terhadap TODO utama):** sambil menunggu jawaban vendor soal bug `cost` (lihat poin 12), user mempelajari relasi data eSuite secara umum (Product ↔ UOM ↔ UOM Level ↔ Category ↔ Brand ↔ Group ↔ Variant ↔ Warehouse ↔ Location ↔ Stock Matrix) lewat gitbook KB. Hasil riset dituangkan ke file baru **`edot_dashboard_entity_relations.mmd`** (mermaid ERD, sejajar `edot_entities_erd.mmd` yang sudah ada -- dua file ini beda scope, lihat catatan di dalam file masing-masing).
+- **Temuan baru dari gitbook (belum ada di CONFIG_NOTES sebelumnya):** Product Group berelasi M:N ke Product (manual assign, field "Associated Product"); Product Brand punya hierarchy sendiri (Parent) tapi **tidak direferensikan dari payload Product** (konsisten dengan temuan lama 5 Agustus); UoM Category mengelompokkan UoM dengan field Ratio untuk konversi. Detail lengkap di `edot_dashboard_entity_relations.mmd` dan `CONFIG_NOTES.md` bagian baru.
+- **Belum dikonfirmasi dari dokumentasi manapun:** FK eksplisit antara Location dan Warehouse (dugaan: Location = storage bin di dalam Warehouse), dan field `location` di payload `/stock-matrix` (masih dugaan dari contoh Postman).
+
+## 16. Fix `uom_levels[].id` DITERAPKAN + Riset `product-variant` (12 Agustus 2026, lanjutan)
+
+- **✅ Kode `product_sync_service.py` DIUBAH:** `uom_levels[].id` sekarang pakai constant `PRODUCT_UOM_LEVEL["id"]` (Level "Low", `01KZ5895R0T1JTR4QTVFGE3GHF`) untuk semua produk, bukan lagi `base_uom["id"]`. **Keputusan dikonfirmasi user:** reuse "Low" sementara karena CBU cuma pakai 2 UOM fisik (units & kg), tidak ada kebutuhan tier packaging asli. Lolos `python3 -m py_compile`. **BELUM di-re-test end-to-end lewat bridge** -- ini PRIORITAS TODO berikutnya (di atas poin 12 lama), lihat poin 17.
+- **Verifikasi data mendukung fix ini:** analisis `sample/hasil get product 10000.txt` (1250 record nyata) menunjukkan 1245/1250 produk `uom_levels`-nya kosong dengan kode lama -- bukti kuat bug lama nyata di skala penuh, bukan cuma di 1 test case.
+- **`cost` makin terisolasi sebagai bug spesifik field ini** (cross-check `base_price` yang terbukti diterapkan bervariasi & benar untuk mayoritas produk) -- **status tetap MENUNGGU JAWABAN VENDOR**, tidak ada perubahan kode terkait `cost` sesi ini.
+- **Riset `product-variant` / blocker Stock Matrix (BELUM diimplementasi):** payload `POST /product-variant` di Postman collection butuh `product: {id}` (referensi ke Product eSuite yang sudah ada) -- kemungkinan besar butuh push manual per produk (1:1), bukan auto-generate. Detail & alur teknis di `CONFIG_NOTES.md`. **Next step sebelum bikin service baru: test manual 1x lewat Postman dulu**, belum boleh dianggap benar sebelum divalidasi.
+
+## 17. TODO Berikutnya (urutan diperbarui, gantikan urutan lama di poin 12)
+
+1. **[BARU, PALING PRIORITAS]** Re-test fix `uom_levels[].id` lewat bridge: `/sync/product?limit=5` dulu, lalu `GET /product` verifikasi `uom_levels` terisi Level "Low" utk produk yg baru di-push (bukan cuma test manual). Kalau sukses, lanjut ke batch lebih besar.
+2. Tetap tunggu jawaban vendor soal `cost` (lihat poin 13, pertanyaan sudah dikirim) -- independen dari poin 1, tidak saling blocking.
+3. **[BARU]** Test manual `POST /product-variant` 1x lewat Postman (product yang sudah ada di eSuite) -- validasi hipotesis alur di poin 16/`CONFIG_NOTES.md` sebelum bikin `product_variant_sync_service.py`.
+4. Setelah 1 & 2 selesai: re-push semua produk yang sempat ke-upsert dengan payload lama (`uom_levels` kosong / `cost` belum fix) supaya konsisten.
+5. Sisanya sama seperti poin 12 lama (poin 2c, 3, 4, 5, 6) -- belum berubah.
 
 ---
 
-**Cara pakai:** upload `bridge_app_vXX.zip` (sudah membundle `app/` + `CONFIG_NOTES.md` + `SESSION_TRANSFER_NOTE.md`) di chat baru, lanjut dari poin 12.
+**Cara pakai:** upload `bridge_app_vXX.zip` (sudah membundle `app/` + `CONFIG_NOTES.md` + `SESSION_TRANSFER_NOTE.md`) di chat baru, lanjut dari poin 17.

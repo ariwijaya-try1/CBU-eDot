@@ -1,6 +1,6 @@
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
-from app.core.exceptions import ValidationError
+from app.core.exceptions import AppError, ValidationError
 
 # Currency -- sama dengan yang dipakai product_sync_service.py (IDR, satu-satunya
 # currency yang dipakai di seluruh bisnis, lihat CONFIG_NOTES.md). Didefinisikan
@@ -16,13 +16,19 @@ CUSTOMER_TYPE_MAPPING = {
     "person": "individual",
 }
 
+# Batch size default -- REVISI 11 Agustus 2026: full bulk upsert (>2000 record
+# dalam 1 request) kena 502 Bad Gateway dari eSuite. Push sekarang dipecah per
+# batch, default 1000 record/batch (instruksi user). Tiap batch = 1 request_id
+# terpisah ke eSuite (bukan retry dari request yang sama).
+DEFAULT_BATCH_SIZE = 1000
+
 
 class CustomerSyncService:
     def __init__(self):
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert", limit: int | None = None):
+    def sync(self, event: str = "upsert", limit: int | None = None, batch_size: int | None = None):
         customers = self.odoo.get_customers()
 
         if not customers:
@@ -42,14 +48,58 @@ class CustomerSyncService:
             customers = customers[:limit]
 
         payload = [self._to_esuite_payload(c) for c in customers]
-        esuite_result = self.esuite.push("customers", event=event, data=payload)
+
+        # Batching -- REVISI 11 Agustus 2026: user konfirmasi bulk upsert di atas
+        # ~2000 record kena 502. Push sekarang selalu lewat batch (bukan 1 request
+        # raksasa), default DEFAULT_BATCH_SIZE (1000). Tiap batch di-push
+        # terpisah & independen: kalau 1 batch gagal (mis. 502 lagi), batch lain
+        # TETAP lanjut jalan (tidak saling abort) -- supaya kegagalan parsial
+        # kelihatan jelas per batch alih-alih 1 error generic yang nutupin
+        # batch mana yang sebenarnya sukses.
+        size = batch_size or DEFAULT_BATCH_SIZE
+        batches = [payload[i : i + size] for i in range(0, len(payload), size)]
+
+        batch_results = []
+        synced_count = 0
+        failed_count = 0
+
+        for idx, batch in enumerate(batches, start=1):
+            try:
+                esuite_result = self.esuite.push("customers", event=event, data=batch)
+                batch_results.append(
+                    {
+                        "batch": idx,
+                        "size": len(batch),
+                        "status": "success",
+                        "external_codes": [item["external_code"] for item in batch],
+                        "esuite_response": esuite_result,
+                    }
+                )
+                synced_count += len(batch)
+            except AppError as e:
+                # Sengaja di-catch per batch (bukan biar propagate ke exception
+                # handler global) -- supaya batch berikutnya tetap lanjut jalan
+                # dan hasil akhirnya tetap melaporkan status semua batch, bukan
+                # cuma batch pertama yang gagal.
+                batch_results.append(
+                    {
+                        "batch": idx,
+                        "size": len(batch),
+                        "status": "failed",
+                        "external_codes": [item["external_code"] for item in batch],
+                        "error": e.to_dict()["error"],
+                    }
+                )
+                failed_count += len(batch)
 
         return {
-            "synced_count": len(payload),
             "total_matched_in_odoo": total_matched,
-            "external_codes": [item["external_code"] for item in payload],
-            "payload_sent": payload,
-            "esuite_response": esuite_result,
+            "total_sent": len(payload),
+            "batch_size": size,
+            "batch_count": len(batches),
+            "synced_count": synced_count,
+            "failed_count": failed_count,
+            "batches": batch_results,
         }
 
     def _resolve_customer_type(self, company_type: str) -> str:

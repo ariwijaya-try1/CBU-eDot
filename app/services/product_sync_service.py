@@ -9,6 +9,16 @@ PRODUCT_TYPE = {
     "id": "664191ad236dfcd5a4000001"
 }  # "Storable Product" (PD-003), dari GET /product-type
 
+# Product UOM Level -- ENTITY TERPISAH dari UOM master (dikonfirmasi vendor
+# 11 Agustus 2026 via PDF Sync Document section 9.4; "id" contoh yang dikira
+# dokumentasi ternyata id ASLI record "Low" dari GET /uom-level).
+# KEPUTUSAN (12 Agustus 2026, dikonfirmasi user): reuse Level "Low" untuk
+# SEMUA produk, sementara -- CBU cuma pakai 2 UOM fisik (units & kg), tidak
+# ada kebutuhan tier packaging beneran (Karton/Pack/Pcs dst), jadi 1 Level
+# generic cukup. Kalau nanti kebutuhan tier berubah, bikin Level baru lewat
+# POST /uom-level dan ganti constant ini.
+PRODUCT_UOM_LEVEL = {"id": "01KZ5895R0T1JTR4QTVFGE3GHF"}  # "Low", dari GET /uom-level
+
 # Mapping UOM: key = nama uom_id di Odoo (di-lowercase), value = id eSuite.
 # TERKONFIRMASI & SELESAI (5-7 Agustus 2026): cuma "units" & "kg" yang dipakai
 # di seluruh 731 produk Saleable -- "pcs"/"pack" (dugaan awal diskusi bisnis)
@@ -158,18 +168,16 @@ class ProductSyncService:
             # sendiri, lihat CONFIG_NOTES.md), jadi keduanya diisi konsisten dari
             # base_uom yang sama -- 1 level, qty=1, convertion=1.
             "purchase_uom": base_uom,
-            # "id" -- REVISI 11 Agustus 2026: keputusan sha1-generate (7 Agustus)
-            # DIANULIR. Vendor eSuite konfirmasi lewat test manual: id hasil
-            # generate sendiri (hash) dibaca sistem mereka sebagai id asing/tidak
-            # dikenal ("id Odoo-nya Cahaya Boga, bukan id eSuite") -- efeknya
-            # BUKAN cuma uom_levels gagal simpan, tapi seluruh update produk itu
-            # (termasuk cost) ikut gagal ter-apply walau response tetap 200.
-            # Ini kemungkinan besar root cause kasus "110/1247 partial update".
-            # Fix: id disamakan dengan uom.id (id UOM master eSuite asli, dari
-            # GET /uom vendor) -- bukan bikin id baru sendiri. Lihat CONFIG_NOTES.md.
+            # "id" -- REVISI 12 Agustus 2026: pendekatan lama (id = base_uom["id"],
+            # id UOM master) TERBUKTI SALAH KONSEP & gagal diam-diam di skala penuh
+            # (dicek dari GET /product 1250 record: 1245/1250 uom_levels KOSONG).
+            # Product UOM Level itu entity terpisah dari UOM master (lihat
+            # PRODUCT_UOM_LEVEL di atas + CONFIG_NOTES.md). Sekarang pakai id
+            # Level "Low" yang sudah terbukti valid & tersimpan (test manual
+            # 12 Agustus, produk ODOO-PROD-18374).
             "uom_levels": [
                 {
-                    "id": base_uom["id"],
+                    "id": PRODUCT_UOM_LEVEL["id"],
                     "uom": base_uom,
                     "qty": 1,
                     "convertion": 1,

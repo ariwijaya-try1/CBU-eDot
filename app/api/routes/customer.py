@@ -11,9 +11,18 @@ def sync_customers(
     limit: int | None = Query(
         default=None,
         description=(
-            "TEMPORARY, buat diagnostik 502 Bad Gateway saat push full batch "
-            "(7 Agustus 2026) -- kirim cuma N customer pertama, bukan semua. "
-            "Kosongkan (default) untuk behavior normal (semua customer)."
+            "TEMPORARY, buat diagnostik push full batch (7 Agustus 2026) -- "
+            "kirim cuma N customer pertama, bukan semua. Kosongkan (default) "
+            "untuk behavior normal (semua customer)."
+        ),
+    ),
+    batch_size: int | None = Query(
+        default=None,
+        ge=1,
+        description=(
+            "Jumlah record per batch ke eSuite (11 Agustus 2026, root cause "
+            "502 di atas ~2000 record dalam 1 request). Kosongkan untuk pakai "
+            "default 1000."
         ),
     ),
 ):
@@ -22,5 +31,7 @@ def sync_customers(
     Field `type` di payload eSuite dipetakan dari `company_type` Odoo
     ("company" -> "company", "person" -> "individual") -- BUKAN dari
     `res.partner.type` (itu jenis alamat, bukan tipe customer).
+    Push selalu dipecah per batch (default 1000 record/batch) -- lihat
+    CustomerSyncService.sync() untuk detail penanganan kegagalan per batch.
     """
-    return service.sync(event=event, limit=limit)
+    return service.sync(event=event, limit=limit, batch_size=batch_size)

@@ -92,15 +92,16 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{base_url}}/api/sync/customers?event=upsert&limit=5",
+              "raw": "{{base_url}}/api/sync/customers?event=upsert&limit=5&batch_size=1000",
               "host": ["{{base_url}}"],
               "path": ["api", "sync", "customers"],
               "query": [
                 { "key": "event", "value": "upsert", "description": "init | upsert" },
-                { "key": "limit", "value": "5", "description": "opsional, diagnostik 502 -- kosongkan buat semua customer" }
+                { "key": "limit", "value": "5", "description": "opsional, diagnostik -- kosongkan buat semua customer" },
+                { "key": "batch_size", "value": "1000", "description": "opsional, default 1000 -- push dipecah per batch supaya nggak 502 di atas ~2000 record" }
               ]
             },
-            "description": "Odoo res.partner (customer_rank > 0) -> eSuite /customers. Belum pernah full-push ke sandbox (lihat CONFIG_NOTES.md)."
+            "description": "Odoo res.partner (customer_rank > 0) -> eSuite /customers. Push dipecah per batch (default 1000/batch) sejak 11 Agustus 2026 -- response berisi array 'batches' per-batch status, bukan payload_sent/esuite_response tunggal lagi."
           }
         }
       ]
