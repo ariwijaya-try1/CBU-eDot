@@ -238,6 +238,19 @@ class ProductSyncService:
                     "product_category": item["product_category"],
                     "base_uom": item["base_uom"],
                     "currency": item["currency"],
+                    # cost & base_price -- BARU 13 Agustus 2026. Sebelumnya
+                    # tidak dikirim sama sekali (ikut contoh payload vendor
+                    # yang juga tidak mencantumkan field ini) -- akibatnya
+                    # SEMUA variant punya base_price: 0 & is_price_set: false
+                    # di eSuite (dikonfirmasi lewat GET /product-variant).
+                    # Karena dashboard sales eSuite nampilin data Variant
+                    # (bukan Product, lihat SESSION_TRANSFER_NOTE.md poin 18a),
+                    # variant WAJIB bawa base_price sendiri, mirror dari produk
+                    # induknya -- kalau tidak, harga di dashboard sales
+                    # tampil Rp 0. `cost` ikut dikirim 0 juga, konsisten
+                    # dengan kebijakan cost di produk (lihat _to_esuite_payload()).
+                    "cost": item["cost"],
+                    "base_price": item["base_price"],
                 }
             )
 
