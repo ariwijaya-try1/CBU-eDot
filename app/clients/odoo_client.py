@@ -89,7 +89,7 @@ class OdooClient:
             {"fields": ["id", "name", "complete_name"]},
         )
 
-    def get_products(self):
+    def get_products(self, ids: list | None = None):
         """
         Sumber data untuk entity Product di eSuite.
         Model: product.product (BUKAN product.template) -- field 'free_qty'
@@ -100,6 +100,10 @@ class OdooClient:
         Filter domain Odoo:
         - categ_id.complete_name ilike "ALL / SALEABLE" -- produk yang boleh dijual
         - list_price > 0 -- exclude produk yang harganya belum di-set
+        - ids (OPSIONAL, 12 Agustus 2026) -- kalau diisi, tambahan filter
+          "id in ids" -- dipakai buat upsert produk tertentu saja lewat
+          external_code (lihat product_sync_service.py), bukan cuma semua
+          produk sekaligus. Kosongkan (default None) untuk behavior normal.
 
         REVISI 5 Agustus 2026: filter free_qty > 0 DIHAPUS (baik di domain
         maupun di post-filter Python). Produk dengan free_qty = 0 tetap
@@ -109,12 +113,13 @@ class OdooClient:
         field stok terkait, cuma tidak lagi dipakai sebagai syarat exclude
         dari katalog produk. Lihat CONFIG_NOTES.md untuk detail keputusan ini.
         """
-        domain = [
-            [
-                ("categ_id.complete_name", "ilike", "ALL / SALEABLE"),
-                ("list_price", ">", 0),
-            ]
+        conditions = [
+            ("categ_id.complete_name", "ilike", "ALL / SALEABLE"),
+            ("list_price", ">", 0),
         ]
+        if ids:
+            conditions.append(("id", "in", ids))
+        domain = [conditions]
 
         return self._execute(
             "product.product",
@@ -143,7 +148,7 @@ class OdooClient:
         )
         return {r["id"]: r["name"] for r in records}
 
-    def get_customers(self):
+    def get_customers(self, ids: list | None = None):
         """
         Sumber data untuk entity Customer di eSuite.
         Model: res.partner, difilter customer_rank > 0 (konvensi standar Odoo
@@ -159,8 +164,15 @@ class OdooClient:
         Catatan (dari user): field Odoo yang benar untuk tipe customer itu
         `company_type`, BUKAN `type` -- `res.partner.type` artinya jenis
         alamat (invoice/delivery/dll), bukan tipe entitas customer.
+
+        ids (OPSIONAL, 12 Agustus 2026): filter tambahan "id in ids" --
+        dipakai buat upsert customer tertentu saja lewat external_code
+        (lihat customer_sync_service.py). Kosongkan untuk behavior normal.
         """
-        domain = [[("customer_rank", ">", 0), ("active", "=", True)]]
+        conditions = [("customer_rank", ">", 0), ("active", "=", True)]
+        if ids:
+            conditions.append(("id", "in", ids))
+        domain = [conditions]
 
         return self._execute(
             "res.partner",

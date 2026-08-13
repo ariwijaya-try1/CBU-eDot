@@ -1,6 +1,7 @@
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import AppError, ValidationError
+from app.core.sync_logger import log_sync_result
 
 # Currency -- sama dengan yang dipakai product_sync_service.py (IDR, satu-satunya
 # currency yang dipakai di seluruh bisnis, lihat CONFIG_NOTES.md). Didefinisikan
@@ -22,17 +23,29 @@ CUSTOMER_TYPE_MAPPING = {
 # terpisah ke eSuite (bukan retry dari request yang sama).
 DEFAULT_BATCH_SIZE = 1000
 
+# Prefix external_code Customer -- dipakai buat parse balik id Odoo dari
+# external_code (fitur "upsert by external_code", 12 Agustus 2026, pola
+# sama dengan product_sync_service.py).
+EXTERNAL_CODE_PREFIX = "ODOO-PARTNER-"
+
 
 class CustomerSyncService:
     def __init__(self):
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert", limit: int | None = None, batch_size: int | None = None):
-        customers = self.odoo.get_customers()
+    def sync(
+        self,
+        event: str = "upsert",
+        limit: int | None = None,
+        batch_size: int | None = None,
+        external_codes: str | None = None,
+    ):
+        odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
+        customers = self.odoo.get_customers(ids=odoo_ids)
 
         if not customers:
-            raise ValidationError("Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo")
+            raise ValidationError("Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo (cek juga external_codes kalau diisi)")
 
         total_matched = len(customers)
 
@@ -72,6 +85,12 @@ class CustomerSyncService:
                         "size": len(batch),
                         "status": "success",
                         "external_codes": [item["external_code"] for item in batch],
+                        # payload_sent -- WAJIB sesuai aturan FIXED di
+                        # SESSION_TRANSFER_NOTE.md poin 2 ("Response tiap
+                        # endpoint selalu include payload_sent"). Restored
+                        # 13 Agustus 2026 -- sempat hilang sejak batching
+                        # ditambahkan 11 Agustus 2026.
+                        "payload_sent": batch,
                         "esuite_response": esuite_result,
                     }
                 )
@@ -87,12 +106,13 @@ class CustomerSyncService:
                         "size": len(batch),
                         "status": "failed",
                         "external_codes": [item["external_code"] for item in batch],
+                        "payload_sent": batch,
                         "error": e.to_dict()["error"],
                     }
                 )
                 failed_count += len(batch)
 
-        return {
+        result = {
             "total_matched_in_odoo": total_matched,
             "total_sent": len(payload),
             "batch_size": size,
@@ -101,6 +121,33 @@ class CustomerSyncService:
             "failed_count": failed_count,
             "batches": batch_results,
         }
+        log_sync_result("customer", event, result)
+        return result
+
+    def _parse_external_codes(self, external_codes: str) -> list[int]:
+        """
+        Parse "ODOO-PARTNER-1,ODOO-PARTNER-2" -> [1, 2] -- pola sama dengan
+        product_sync_service.py::_parse_external_codes(), buat upsert
+        customer tertentu saja tanpa nyentuh yang lain.
+        """
+        ids = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{id_odoo}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            id_part = code[len(EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                raise ValidationError(
+                    f"external_code '{code}' -- bagian id bukan angka valid",
+                    details={"external_code": code},
+                )
+            ids.append(int(id_part))
+        return ids
 
     def _resolve_customer_type(self, company_type: str) -> str:
         mapped = CUSTOMER_TYPE_MAPPING.get(company_type)

@@ -86,6 +86,37 @@ class EsuiteClient:
         )
         return self._handle_response(response, request_id)
 
+    def find_by_external_codes(
+        self, entity_path: str, codes: set[str], page_size: int = 200
+    ) -> dict[str, dict]:
+        """
+        Cari beberapa record spesifik by external_code, paging INTERNAL
+        (early-exit begitu semua code ketemu) -- dipakai bareng oleh
+        app/api/routes/debug.py (lookup manual dari Swagger) dan
+        product_sync_service.py (resolve id eSuite produk sebelum push
+        product-variant, 12 Agustus 2026). Dipusatkan di sini (bukan
+        diduplikasi di 2 tempat) supaya logic paging cuma ada 1 sumber.
+
+        Return: {external_code: record_dict} -- code yang tidak ketemu
+        cukup tidak ada di dict hasil (caller yang putuskan mau treat
+        sebagai skip/error).
+        """
+        found: dict[str, dict] = {}
+        current_page = 1
+        total_page = 1
+
+        while current_page <= total_page and len(found) < len(codes):
+            result = self.pull(entity_path, page=current_page, limit=page_size)
+            for record in result.get("data") or []:
+                code = record.get("external_code")
+                if code in codes and code not in found:
+                    found[code] = record
+
+            total_page = (result.get("meta") or {}).get("total_page", current_page)
+            current_page += 1
+
+        return found
+
     def _safe_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
         Bungkus request supaya kegagalan koneksi (DNS gagal, timeout, host

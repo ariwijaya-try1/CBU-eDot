@@ -38,21 +38,10 @@ def pull_reference(
     """
     if external_codes:
         codes_wanted = {c.strip() for c in external_codes.split(",") if c.strip()}
-        found: dict[str, dict] = {}
-
-        page_size = 200  # aman di bawah timeout 30s esuite_client, jauh lebih kecil dari 9MB sekali tarik
-        current_page = 1
-        total_page = 1  # placeholder, diisi ulang dari meta setelah pull pertama
-
-        while current_page <= total_page and len(found) < len(codes_wanted):
-            result = client.pull(entity_path, page=current_page, limit=page_size)
-            for record in result.get("data") or []:
-                code = record.get("external_code")
-                if code in codes_wanted and code not in found:
-                    found[code] = record
-
-            total_page = (result.get("meta") or {}).get("total_page", current_page)
-            current_page += 1
+        # Logic paging dipusatkan di EsuiteClient.find_by_external_codes()
+        # (12 Agustus 2026, revisi) -- dipakai bareng oleh product_sync_service.py
+        # buat resolve id produk sebelum push product-variant.
+        found = client.find_by_external_codes(entity_path, codes_wanted)
 
         return {
             "status": 200,
@@ -62,7 +51,6 @@ def pull_reference(
                 "requested": sorted(codes_wanted),
                 "found": sorted(found.keys()),
                 "not_found": sorted(codes_wanted - found.keys()),
-                "pages_scanned": current_page - 1,
             },
         }
 

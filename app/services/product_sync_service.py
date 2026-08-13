@@ -1,6 +1,7 @@
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
-from app.core.exceptions import ValidationError
+from app.core.exceptions import AppError, ValidationError
+from app.core.sync_logger import log_sync_result
 
 # Referensi eSuite yang diisi manual (mirip ADMINISTRATIVE_AREA di Branch) --
 # nilai-nilai ini TIDAK datang dari Odoo, itu master data milik eSuite sendiri.
@@ -32,14 +33,34 @@ UOM_MAPPING = {
     "kg": {"id": "664219e2236dfcd5a4000015"},  # UM-0006 "Kilogram", dari GET /uom
 }
 
+# Prefix external_code Product -- dipakai juga buat parse balik id Odoo dari
+# external_code (fitur "upsert by external_code", 12 Agustus 2026).
+EXTERNAL_CODE_PREFIX = "ODOO-PROD-"
+
+# Default batch_size KALAU batch_size tidak diisi -- diisi None DI SINI
+# (bukan angka fixed kayak customer_sync_service.py) supaya behavior lama
+# (1 request buat semua produk sekaligus, sudah tervalidasi ke sandbox
+# 1247 produk tanpa masalah 502 seperti kasus Customer) TETAP SAMA PERSIS
+# kalau caller tidak isi batch_size -- minimal invasive, tidak mengubah
+# behavior existing yang sudah jalan.
+DEFAULT_BATCH_SIZE = None
+
 
 class ProductSyncService:
     def __init__(self):
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert", limit: int | None = None):
-        products = self.odoo.get_products()
+    def sync(
+        self,
+        event: str = "upsert",
+        limit: int | None = None,
+        batch_size: int | None = None,
+        external_codes: str | None = None,
+        with_variant: bool = False,
+    ):
+        odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
+        products = self.odoo.get_products(ids=odoo_ids)
 
         # REVISI 5 Agustus 2026: filter free_qty > 0 DIHAPUS dari sini.
         # Keputusan bisnis: produk dengan free_qty = 0 tetap disync & tetap
@@ -53,7 +74,7 @@ class ProductSyncService:
         # (domain Odoo, di odoo_client.py::get_products()).
 
         if not products:
-            raise ValidationError("Tidak ada produk Saleable ditemukan di Odoo")
+            raise ValidationError("Tidak ada produk Saleable ditemukan di Odoo (cek juga external_codes kalau diisi)")
 
         total_matched = len(products)
 
@@ -66,17 +87,173 @@ class ProductSyncService:
             products = products[:limit]
 
         category_id_map = self._resolve_category_ids(products)
-
         payload = [self._to_esuite_payload(p, category_id_map) for p in products]
-        esuite_result = self.esuite.push("product", event=event, data=payload)
 
-        return {
-            "synced_count": len(payload),
+        # Batching -- REVISI 12 Agustus 2026, opsional (beda dari Customer yang
+        # SELALU batch). Kalau batch_size tidak diisi, 1 batch = semua produk
+        # (behavior lama, tidak berubah). Kalau diisi, dipecah sama seperti
+        # customer_sync_service.py -- 1 batch gagal TIDAK menggagalkan batch lain.
+        size = batch_size or len(payload)
+        batches = [payload[i : i + size] for i in range(0, len(payload), size)] or [[]]
+
+        batch_results = []
+        variant_results = []
+        synced_count = 0
+        failed_count = 0
+
+        for idx, batch in enumerate(batches, start=1):
+            try:
+                esuite_result = self.esuite.push("product", event=event, data=batch)
+                batch_results.append(
+                    {
+                        "batch": idx,
+                        "size": len(batch),
+                        "status": "success",
+                        "external_codes": [item["external_code"] for item in batch],
+                        # payload_sent -- WAJIB sesuai aturan FIXED di
+                        # SESSION_TRANSFER_NOTE.md poin 2 ("Response tiap
+                        # endpoint selalu include payload_sent"). Sempat
+                        # hilang pas batching ditambahkan 12 Agustus 2026 --
+                        # dikembalikan setelah ditegur user.
+                        "payload_sent": batch,
+                        "esuite_response": esuite_result,
+                    }
+                )
+                synced_count += len(batch)
+
+                # with_variant -- BARU 12 Agustus 2026, DEFAULT FALSE (opt-in).
+                # Belum divalidasi end-to-end skala besar, jadi sengaja tidak
+                # otomatis nyala biar tidak ada efek samping tak terduga ke
+                # produk yang belum ditest. Lihat _sync_variants_for_batch().
+                if with_variant:
+                    variant_results.append(self._sync_variants_for_batch(batch, event))
+            except AppError as e:
+                # Pola sama dengan customer_sync_service.py -- di-catch per
+                # batch, batch lain tetap lanjut.
+                batch_results.append(
+                    {
+                        "batch": idx,
+                        "size": len(batch),
+                        "status": "failed",
+                        "external_codes": [item["external_code"] for item in batch],
+                        "payload_sent": batch,
+                        "error": e.to_dict()["error"],
+                    }
+                )
+                failed_count += len(batch)
+
+        result = {
             "total_matched_in_odoo": total_matched,
-            "external_codes": [item["external_code"] for item in payload],
-            "payload_sent": payload,
-            "esuite_response": esuite_result,
+            "total_sent": len(payload),
+            "batch_size": size,
+            "batch_count": len(batches),
+            "synced_count": synced_count,
+            "failed_count": failed_count,
+            "batches": batch_results,
         }
+        if with_variant:
+            result["variant_sync"] = variant_results
+
+        log_sync_result("product", event, result)
+        return result
+
+    def _parse_external_codes(self, external_codes: str) -> list[int]:
+        """
+        Parse "ODOO-PROD-123,ODOO-PROD-456" -> [123, 456] -- dipakai fitur
+        "upsert by external_code" (12 Agustus 2026), supaya bisa push 1/
+        beberapa produk tertentu saja tanpa nyentuh yang lain. Format harus
+        persis sesuai EXTERNAL_CODE_PREFIX (external_code yang KITA generate
+        sendiri di _to_esuite_payload(), bukan bebas string apapun).
+        """
+        ids = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{id_odoo}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            id_part = code[len(EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                raise ValidationError(
+                    f"external_code '{code}' -- bagian id bukan angka valid",
+                    details={"external_code": code},
+                )
+            ids.append(int(id_part))
+        return ids
+
+    def _sync_variants_for_batch(self, product_batch: list[dict], event: str) -> dict:
+        """
+        Push 1 product-variant per product (1:1) buat 1 batch produk yang
+        BARU SAJA berhasil di-push -- BARU 12 Agustus 2026, konfirmasi
+        vendor: dashboard sales eSuite nampilin data Product VARIANT, bukan
+        Product langsung. Karena CBU tidak punya konsep variant asli (tiap
+        ukuran/kemasan = product.product Odoo terpisah), 1 variant generic
+        per produk sudah cukup mewakili -- BUKAN karena ada variant beneran.
+
+        Alur: POST /product tidak balikin id eSuite (reconcile via
+        external_code, lihat SESSION_TRANSFER_NOTE.md poin 4) -- jadi resolve
+        dulu id-nya lewat EsuiteClient.find_by_external_codes(), baru push
+        ke /product-variant referensi "product": {"id": ...}.
+
+        external_code variant = SAMA PERSIS dengan external_code product
+        induknya (bukan prefix baru) -- berdasarkan data nyata yang sudah
+        diobservasi (variant existing yang external_code-nya identik dengan
+        product induk, lihat CONFIG_NOTES.md).
+
+        Best-effort: eSuite proses async, jadi id produk yang baru dipush
+        BISA SAJA belum ke-resolve (belum selesai diproses). Produk yang
+        gagal resolve di-skip & dilaporkan di "skipped" -- TIDAK bikin
+        seluruh batch product gagal. Re-run manual buat yang skip.
+        """
+        codes_wanted = {item["external_code"] for item in product_batch}
+        resolved = self.esuite.find_by_external_codes("product", codes_wanted)
+
+        variant_payload = []
+        skipped = []
+        for item in product_batch:
+            code = item["external_code"]
+            record = resolved.get(code)
+            esuite_id = record.get("id") if record else None
+            if not esuite_id:
+                skipped.append(code)
+                continue
+            variant_payload.append(
+                {
+                    "product": {"id": esuite_id},
+                    "external_code": code,
+                    "name": item["name"],
+                    "status": "active",
+                    "product_type": item["product_type"],
+                    "product_category": item["product_category"],
+                    "base_uom": item["base_uom"],
+                    "currency": item["currency"],
+                }
+            )
+
+        if not variant_payload:
+            return {"pushed": 0, "skipped": skipped, "esuite_response": None}
+
+        try:
+            esuite_result = self.esuite.push("product-variant", event=event, data=variant_payload)
+            return {
+                "pushed": len(variant_payload),
+                "skipped": skipped,
+                "external_codes": [v["external_code"] for v in variant_payload],
+                "esuite_response": esuite_result,
+            }
+        except AppError as e:
+            # Kegagalan push variant TIDAK di-propagate -- produk induknya
+            # sudah berhasil, jangan sampai laporan sync product jadi error
+            # gara-gara variant. Caller cek "variant_sync" di response.
+            return {
+                "pushed": 0,
+                "skipped": skipped,
+                "attempted": [v["external_code"] for v in variant_payload],
+                "error": e.to_dict()["error"],
+            }
 
     def _resolve_category_ids(self, products: list) -> dict:
         """

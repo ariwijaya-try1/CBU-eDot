@@ -25,6 +25,14 @@ def sync_customers(
             "default 1000."
         ),
     ),
+    external_codes: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL (12 Agustus 2026) -- upsert customer TERTENTU saja, "
+            "comma-separated, format 'ODOO-PARTNER-{id}' (mis. "
+            "ODOO-PARTNER-1,ODOO-PARTNER-2). Kosongkan untuk semua customer."
+        ),
+    ),
 ):
     """
     Trigger manual sync Customer: Odoo (res.partner, customer_rank > 0) -> eSuite.
@@ -34,4 +42,4 @@ def sync_customers(
     Push selalu dipecah per batch (default 1000 record/batch) -- lihat
     CustomerSyncService.sync() untuk detail penanganan kegagalan per batch.
     """
-    return service.sync(event=event, limit=limit, batch_size=batch_size)
+    return service.sync(event=event, limit=limit, batch_size=batch_size, external_codes=external_codes)
