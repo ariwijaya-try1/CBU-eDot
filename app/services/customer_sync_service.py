@@ -40,6 +40,7 @@ class CustomerSyncService:
         limit: int | None = None,
         batch_size: int | None = None,
         external_codes: str | None = None,
+        include_payload: bool = False,
     ):
         odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
         customers = self.odoo.get_customers(ids=odoo_ids)
@@ -79,37 +80,37 @@ class CustomerSyncService:
         for idx, batch in enumerate(batches, start=1):
             try:
                 esuite_result = self.esuite.push("customers", event=event, data=batch)
-                batch_results.append(
-                    {
-                        "batch": idx,
-                        "size": len(batch),
-                        "status": "success",
-                        "external_codes": [item["external_code"] for item in batch],
-                        # payload_sent -- WAJIB sesuai aturan FIXED di
-                        # SESSION_TRANSFER_NOTE.md poin 2 ("Response tiap
-                        # endpoint selalu include payload_sent"). Restored
-                        # 13 Agustus 2026 -- sempat hilang sejak batching
-                        # ditambahkan 11 Agustus 2026.
-                        "payload_sent": batch,
-                        "esuite_response": esuite_result,
-                    }
-                )
+                batch_entry = {
+                    "batch": idx,
+                    "size": len(batch),
+                    "status": "success",
+                    "external_codes": [item["external_code"] for item in batch],
+                    "esuite_response": esuite_result,
+                }
+                # payload_sent -- REVISI 13 Agustus 2026: sekarang OPT-IN
+                # (default False), bukan lagi selalu tampil. Pola sama
+                # dengan product_sync_service.py -- lihat komentar di sana
+                # & SESSION_TRANSFER_NOTE.md poin 20 buat alasan lengkap
+                # (Swagger lambat kalau payload penuh selalu ikut render).
+                if include_payload:
+                    batch_entry["payload_sent"] = batch
+                batch_results.append(batch_entry)
                 synced_count += len(batch)
             except AppError as e:
                 # Sengaja di-catch per batch (bukan biar propagate ke exception
                 # handler global) -- supaya batch berikutnya tetap lanjut jalan
                 # dan hasil akhirnya tetap melaporkan status semua batch, bukan
                 # cuma batch pertama yang gagal.
-                batch_results.append(
-                    {
-                        "batch": idx,
-                        "size": len(batch),
-                        "status": "failed",
-                        "external_codes": [item["external_code"] for item in batch],
-                        "payload_sent": batch,
-                        "error": e.to_dict()["error"],
-                    }
-                )
+                batch_entry = {
+                    "batch": idx,
+                    "size": len(batch),
+                    "status": "failed",
+                    "external_codes": [item["external_code"] for item in batch],
+                    "error": e.to_dict()["error"],
+                }
+                if include_payload:
+                    batch_entry["payload_sent"] = batch
+                batch_results.append(batch_entry)
                 failed_count += len(batch)
 
         result = {

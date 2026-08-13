@@ -33,6 +33,15 @@ def sync_customers(
             "ODOO-PARTNER-1,ODOO-PARTNER-2). Kosongkan untuk semua customer."
         ),
     ),
+    include_payload: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL (13 Agustus 2026) -- kalau True, response sertakan "
+            "payload_sent penuh per batch. Default False supaya Swagger "
+            "tetap responsif untuk batch besar -- external_codes tetap "
+            "selalu tampil."
+        ),
+    ),
 ):
     """
     Trigger manual sync Customer: Odoo (res.partner, customer_rank > 0) -> eSuite.
@@ -42,4 +51,10 @@ def sync_customers(
     Push selalu dipecah per batch (default 1000 record/batch) -- lihat
     CustomerSyncService.sync() untuk detail penanganan kegagalan per batch.
     """
-    return service.sync(event=event, limit=limit, batch_size=batch_size, external_codes=external_codes)
+    return service.sync(
+        event=event,
+        limit=limit,
+        batch_size=batch_size,
+        external_codes=external_codes,
+        include_payload=include_payload,
+    )

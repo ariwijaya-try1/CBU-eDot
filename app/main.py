@@ -14,6 +14,12 @@ from app.core.exceptions import AppError
 app = FastAPI(
     title=settings.APP_NAME,
     dependencies=[Depends(verify_api_key)],
+    # persistAuthorization -- API key yang diisi lewat tombol Authorize
+    # disimpan browser (localStorage), jadi tetap ke-fill otomatis walau
+    # Swagger di-reload (mis. setelah uvicorn --reload restart karena ada
+    # update code). Tidak ada hubungannya dengan expiry token -- auth kita
+    # tetap static API key tanpa masa berlaku, ini cuma soal state UI.
+    swagger_ui_parameters={"persistAuthorization": True},
 )
 
 

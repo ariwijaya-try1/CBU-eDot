@@ -43,6 +43,16 @@ def sync_product(
             "(opt-in) sampai fitur ini tervalidasi."
         ),
     ),
+    include_payload: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL (13 Agustus 2026) -- kalau True, response sertakan "
+            "payload_sent penuh (data lengkap yang dikirim ke eSuite) per "
+            "batch. Default False supaya Swagger tetap responsif untuk "
+            "batch besar -- external_codes tetap selalu tampil. Nyalakan "
+            "cuma pas perlu verifikasi payload detail (mis. debug 1-2 produk)."
+        ),
+    ),
 ):
     """
     Trigger manual sync Product: Odoo (product.product, category Saleable & list_price>0) -> eSuite.
@@ -55,4 +65,5 @@ def sync_product(
         batch_size=batch_size,
         external_codes=external_codes,
         with_variant=with_variant,
+        include_payload=include_payload,
     )

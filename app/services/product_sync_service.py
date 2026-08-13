@@ -58,6 +58,7 @@ class ProductSyncService:
         batch_size: int | None = None,
         external_codes: str | None = None,
         with_variant: bool = False,
+        include_payload: bool = False,
     ):
         odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
         products = self.odoo.get_products(ids=odoo_ids)
@@ -104,21 +105,24 @@ class ProductSyncService:
         for idx, batch in enumerate(batches, start=1):
             try:
                 esuite_result = self.esuite.push("product", event=event, data=batch)
-                batch_results.append(
-                    {
-                        "batch": idx,
-                        "size": len(batch),
-                        "status": "success",
-                        "external_codes": [item["external_code"] for item in batch],
-                        # payload_sent -- WAJIB sesuai aturan FIXED di
-                        # SESSION_TRANSFER_NOTE.md poin 2 ("Response tiap
-                        # endpoint selalu include payload_sent"). Sempat
-                        # hilang pas batching ditambahkan 12 Agustus 2026 --
-                        # dikembalikan setelah ditegur user.
-                        "payload_sent": batch,
-                        "esuite_response": esuite_result,
-                    }
-                )
+                batch_entry = {
+                    "batch": idx,
+                    "size": len(batch),
+                    "status": "success",
+                    "external_codes": [item["external_code"] for item in batch],
+                    "esuite_response": esuite_result,
+                }
+                # payload_sent -- REVISI 13 Agustus 2026: sekarang OPT-IN
+                # (default False), bukan lagi selalu tampil. Alasan: Swagger
+                # jadi lambat kalau batch besar (payload penuh tiap produk
+                # ikut di-render browser). Aturan FIXED lama poin 2 ("selalu
+                # include payload_sent") DIGANTI keputusan baru user --
+                # sudah dikonfirmasi & dicatat di SESSION_TRANSFER_NOTE.md
+                # poin 20. external_codes tetap selalu tampil (cukup buat
+                # tracking mana yang sukses/gagal tanpa payload penuh).
+                if include_payload:
+                    batch_entry["payload_sent"] = batch
+                batch_results.append(batch_entry)
                 synced_count += len(batch)
 
                 # with_variant -- BARU 12 Agustus 2026, DEFAULT FALSE (opt-in).
@@ -126,20 +130,22 @@ class ProductSyncService:
                 # otomatis nyala biar tidak ada efek samping tak terduga ke
                 # produk yang belum ditest. Lihat _sync_variants_for_batch().
                 if with_variant:
-                    variant_results.append(self._sync_variants_for_batch(batch, event))
+                    variant_results.append(
+                        self._sync_variants_for_batch(batch, event, include_payload)
+                    )
             except AppError as e:
                 # Pola sama dengan customer_sync_service.py -- di-catch per
                 # batch, batch lain tetap lanjut.
-                batch_results.append(
-                    {
-                        "batch": idx,
-                        "size": len(batch),
-                        "status": "failed",
-                        "external_codes": [item["external_code"] for item in batch],
-                        "payload_sent": batch,
-                        "error": e.to_dict()["error"],
-                    }
-                )
+                batch_entry = {
+                    "batch": idx,
+                    "size": len(batch),
+                    "status": "failed",
+                    "external_codes": [item["external_code"] for item in batch],
+                    "error": e.to_dict()["error"],
+                }
+                if include_payload:
+                    batch_entry["payload_sent"] = batch
+                batch_results.append(batch_entry)
                 failed_count += len(batch)
 
         result = {
@@ -184,7 +190,9 @@ class ProductSyncService:
             ids.append(int(id_part))
         return ids
 
-    def _sync_variants_for_batch(self, product_batch: list[dict], event: str) -> dict:
+    def _sync_variants_for_batch(
+        self, product_batch: list[dict], event: str, include_payload: bool = False
+    ) -> dict:
         """
         Push 1 product-variant per product (1:1) buat 1 batch produk yang
         BARU SAJA berhasil di-push -- BARU 12 Agustus 2026, konfirmasi
@@ -238,22 +246,30 @@ class ProductSyncService:
 
         try:
             esuite_result = self.esuite.push("product-variant", event=event, data=variant_payload)
-            return {
+            entry = {
                 "pushed": len(variant_payload),
                 "skipped": skipped,
                 "external_codes": [v["external_code"] for v in variant_payload],
                 "esuite_response": esuite_result,
             }
+            # payload_sent -- opt-in, ikut flag include_payload yang sama
+            # dengan batch product (13 Agustus 2026, lihat SESSION_TRANSFER_NOTE.md poin 20).
+            if include_payload:
+                entry["payload_sent"] = variant_payload
+            return entry
         except AppError as e:
             # Kegagalan push variant TIDAK di-propagate -- produk induknya
             # sudah berhasil, jangan sampai laporan sync product jadi error
             # gara-gara variant. Caller cek "variant_sync" di response.
-            return {
+            entry = {
                 "pushed": 0,
                 "skipped": skipped,
                 "attempted": [v["external_code"] for v in variant_payload],
                 "error": e.to_dict()["error"],
             }
+            if include_payload:
+                entry["payload_sent"] = variant_payload
+            return entry
 
     def _resolve_category_ids(self, products: list) -> dict:
         """
@@ -360,32 +376,35 @@ class ProductSyncService:
                     "convertion": 1,
                 }
             ],
-            # "cost" dikirim sebagai 1 (Rp 1) fixed -- BUKAN dari standard_price
+            # "cost" dikirim sebagai 0 fixed -- BUKAN dari standard_price
             # (instruksi boss, 6 Agustus 2026: data cost/harga beli asli tidak
             # boleh dikirim ke eSuite, cuma base_price/harga jual yang boleh).
-            # Riwayat revisi field ini (semua 6 Agustus 2026):
-            #   1) key dihapus total dari payload -> value lama nyangkut di UI.
-            #   2) diganti kirim eksplisit 0 -> TETAP nyangkut, ternyata eSuite
-            #      treat 0 sebagai falsy dan skip update (bug backend eSuite,
-            #      dikonfirmasi via test manual: cost=1 -> UI berubah,
-            #      cost=0 -> UI tidak berubah sama sekali).
-            #   3) (sekarang) pakai 1 sebagai sentinel -- bukan nilai cost asli,
-            #      cuma workaround supaya bukan falsy dan benar-benar ke-apply.
-            #      Efeknya di UI eSuite: "Rp 1", bukan "Rp 0" -- disepakati user
-            #      sebagai kompromi sampai IT eSuite kasih cara resmi clear ke 0.
-            #   4) (11 Agustus 2026) TEMUAN BARU, BELUM ACTION: update cost ke 0
-            #      lewat UI dashboard eSuite BERHASIL -- jadi falsy-skip ini
-            #      kemungkinan besar bug spesifik di endpoint API, bukan
-            #      keterbatasan sistem eSuite secara umum. Sudah dilaporkan ke
-            #      vendor (masih 1 laporan lagi terkait uom_levels.id di atas
-            #      yang juga lagi ditunggu). JANGAN ganti "cost": 1 -> 0 di sini
-            #      sampai ada konfirmasi endpoint sudah benar (kemungkinan
-            #      root cause-nya sama dengan uom_levels.id di atas -- payload
-            #      lama ikut gagal ter-apply gara-gara id yang salah).
+            # User maunya null, tapi eSuite render null jadi 0 juga di UI --
+            # jadi 0 eksplisit dipakai langsung, tidak ada bedanya secara hasil.
+            #
+            # ROOT CAUSE FINAL (13 Agustus 2026, mengoreksi dugaan lama di
+            # bawah): BUKAN bug falsy-skip di endpoint eSuite. Penyebab
+            # sebenarnya ADA DUA, gabungan:
+            #   1) uom_levels.id & uom sempat salah (id UOM master dipakai,
+            #      padahal harus id Product UOM Level -- lihat komentar di
+            #      atas) -- field ini MANDATORY dan harus valid, kalau salah
+            #      seluruh record gagal diproses dengan benar oleh eSuite
+            #      (bukan cuma uom_levels yang kosong, field lain di record
+            #      yang sama termasuk cost ikut tidak ter-apply).
+            #   2) Delay yang kelihatan kayak "cost tidak berubah" sebagian
+            #      juga karena antrian job async eSuite numpuk pas bulk
+            #      insert banyak produk sekaligus (silent queue backlog),
+            #      bukan berarti request-nya ditolak/di-skip.
+            # Setelah uom_levels.id difix (poin di atas, 12 Agustus 2026) dan
+            # uom_levels sudah terbukti valid & tersimpan benar, cost = 0
+            # sekarang aman dipakai -- dugaan lama "eSuite treat 0 sebagai
+            # falsy" DITARIK, itu cuma efek samping dari record yang gagal
+            # diproses gara-gara uom_levels salah, bukan soal value cost itu
+            # sendiri.
             # Field standard_price tetap diambil dari Odoo
             # (odoo_client.py::get_products()) tapi tidak pernah dipetakan ke
             # sini. Lihat CONFIG_NOTES.md.
-            "cost": 1,
+            "cost": 0,
             "base_price": product.get("list_price") or 0,
             "currency": CURRENCY,
         }
