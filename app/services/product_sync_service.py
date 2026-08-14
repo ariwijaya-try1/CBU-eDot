@@ -57,7 +57,7 @@ class ProductSyncService:
         limit: int | None = None,
         batch_size: int | None = None,
         external_codes: str | None = None,
-        with_variant: bool = False,
+        with_variant: bool = True,
         include_payload: bool = False,
     ):
         odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
@@ -96,6 +96,17 @@ class ProductSyncService:
         # di dalam dokumen /product itu sendiri, bukan dari collection
         # /product-variant berdiri sendiri). Sekarang variants[] di-embed
         # LANGSUNG di payload /product, tidak ada push terpisah lagi.
+        #
+        # REVISI 14 Agustus 2026 -- default diubah dari False jadi True.
+        # Pelurusan keputusan "no-variant" (6 Agustus): itu bukan "skip
+        # variant sama sekali", tapi "CBU tidak punya variant asli -- tiap
+        # produk nyata WAJIB dapat 1 variant mirror ke induknya (1:1)".
+        # Kalau flag ini False, produk ke-push TANPA variant -> tidak
+        # tampil di dashboard sales eSuite sama sekali (poin 18a). Jadi
+        # default WAJIB True supaya behavior normal (tanpa flag) sudah
+        # benar. Parameter tetap dipertahankan (bukan dihapus) sebagai
+        # escape hatch kalau suatu saat perlu push Product tanpa variant
+        # buat keperluan diagnostik/debug.
         #
         # WAJIB resolve id variant yang SUDAH ADA dulu sebelum push --
         # matching update di sisi eSuite pakai "id", BUKAN "external_code".
