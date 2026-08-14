@@ -128,6 +128,52 @@ class OdooClient:
             {"fields": ["id", "name", "free_qty", "categ_id", "list_price", "standard_price", "uom_id"]},
         )
 
+    def get_stock_by_warehouse(self, warehouse_id: int, product_ids: list | None = None):
+        """
+        Sumber data on_hand/free_to_use PER WAREHOUSE untuk entity Stock
+        Matrix di eSuite (14 Agustus 2026, prep -- belum dipakai service
+        manapun, stock_sync_service.py belum dibuat, lihat
+        stock_sync_progress.md).
+
+        BEDA dari get_products(): field 'qty_available'/'free_qty' di
+        product.product itu GLOBAL (semua lokasi digabung) KECUALI dikasih
+        context 'warehouse' -- Odoo native support ini lewat compute
+        context, jadi TIDAK perlu baca stock.quant manual/group-by sendiri.
+        on_hand -> qty_available (context-scoped ke warehouse ini).
+        free_to_use -> free_qty (context-scoped ke warehouse ini).
+
+        Domain Saleable sengaja SAMA dengan get_products() -- cuma produk
+        yang disync ke eSuite yang perlu stok-nya disync juga.
+
+        CATATAN/BELUM TUNTAS (14 Agustus 2026, dari info admin inventory):
+        Odoo 19 CBU pakai ICT (Inter-Company Transfer) -- stok bisa
+        berpindah ANTAR company. Versi pertama ini TETAP pakai warehouse_id
+        sebagai kunci utama (bukan company_id), asumsi 1 warehouse = 1
+        company pemilik fisik barang saat ini -- BELUM divalidasi penuh
+        terhadap skenario ICT (stok transit/in-transit antar company).
+        Kalau nanti hasil stock-matrix kelihatan tidak sesuai (stok ICT
+        ke-double count atau hilang), ini kandidat pertama buat dicek.
+        Keputusan (user, 14 Agustus 2026): jalan per-warehouse dulu sambil
+        lihat perkembangan, bukan didesain ulang sekarang tanpa bukti masalah.
+
+        product_ids (OPSIONAL): filter tambahan "id in product_ids", pola
+        sama dengan get_products() -- kosongkan untuk semua produk Saleable.
+        """
+        conditions = [("categ_id.complete_name", "ilike", "ALL / SALEABLE")]
+        if product_ids:
+            conditions.append(("id", "in", product_ids))
+        domain = [conditions]
+
+        return self._execute(
+            "product.product",
+            "search_read",
+            domain,
+            {
+                "fields": ["id", "qty_available", "free_qty"],
+                "context": {"warehouse": warehouse_id},
+            },
+        )
+
     def get_categories_by_ids(self, ids: list):
         """
         Ambil name asli (leaf name, bukan complete_name) untuk sekumpulan
