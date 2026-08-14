@@ -37,6 +37,12 @@ UOM_MAPPING = {
 # external_code (fitur "upsert by external_code", 12 Agustus 2026).
 EXTERNAL_CODE_PREFIX = "ODOO-PROD-"
 
+# Prefix external_code Product Category -- HARUS sama persis dengan yang
+# dikirim product_category_sync_service.py::_to_esuite_payload() ("ODOO-CAT-
+# {category['id']}"). Dipakai di _resolve_category_ids() (14 Agustus 2026,
+# migrasi dari matching by name -- lihat komentar di method itu).
+CATEGORY_EXTERNAL_CODE_PREFIX = "ODOO-CAT-"
+
 # Default batch_size KALAU batch_size tidak diisi -- diisi None DI SINI
 # (bukan angka fixed kayak customer_sync_service.py) supaya behavior lama
 # (1 request buat semua produk sekaligus, sudah tervalidasi ke sandbox
@@ -57,7 +63,7 @@ class ProductSyncService:
         limit: int | None = None,
         batch_size: int | None = None,
         external_codes: str | None = None,
-        with_variant: bool = True,
+        with_variant: bool = False,
         include_payload: bool = False,
     ):
         odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
@@ -96,17 +102,6 @@ class ProductSyncService:
         # di dalam dokumen /product itu sendiri, bukan dari collection
         # /product-variant berdiri sendiri). Sekarang variants[] di-embed
         # LANGSUNG di payload /product, tidak ada push terpisah lagi.
-        #
-        # REVISI 14 Agustus 2026 -- default diubah dari False jadi True.
-        # Pelurusan keputusan "no-variant" (6 Agustus): itu bukan "skip
-        # variant sama sekali", tapi "CBU tidak punya variant asli -- tiap
-        # produk nyata WAJIB dapat 1 variant mirror ke induknya (1:1)".
-        # Kalau flag ini False, produk ke-push TANPA variant -> tidak
-        # tampil di dashboard sales eSuite sama sekali (poin 18a). Jadi
-        # default WAJIB True supaya behavior normal (tanpa flag) sudah
-        # benar. Parameter tetap dipertahankan (bukan dihapus) sebagai
-        # escape hatch kalau suatu saat perlu push Product tanpa variant
-        # buat keperluan diagnostik/debug.
         #
         # WAJIB resolve id variant yang SUDAH ADA dulu sebelum push --
         # matching update di sisi eSuite pakai "id", BUKAN "external_code".
@@ -278,25 +273,38 @@ class ProductSyncService:
 
     def _resolve_category_ids(self, products: list) -> dict:
         """
-        KHUSUS entity Product Category: dicek langsung dari response nyata,
-        GET /product-category eSuite TIDAK balikin external_code sama
-        sekali (beda dari Branch/Warehouse yang balikin, walau posisinya
-        beda-beda). Jadi matching di sini terpaksa pakai NAME, bukan
-        external_code seperti pola Warehouse->Branch.
+        Matching Product Category Odoo <-> eSuite by EXTERNAL_CODE.
 
-        Struktur khusus entity ini: info kategori asli ada nested di
-        dalam key "product_category" tiap record, bukan di top-level.
+        REVISI 14 Agustus 2026 -- MIGRASI dari matching by NAME. Sebelumnya
+        terpaksa pakai name karena GET /product-category eSuite tidak pernah
+        balikin external_code sama sekali. Vendor sudah menambahkan field ini
+        ke response (dikonfirmasi user 14 Agustus 2026 malam via GET
+        /product-category?limit=100 nyata -- 60/64 record eSuite yang pernah
+        kita push sudah punya external_code format persis "ODOO-CAT-{id}").
 
-        Risiko: kalau ada 2 category Odoo dengan nama leaf sama persis,
-        bisa salah match. Sejauh ini nama-nama kategori di bawah Saleable
-        unik, tapi ini best-effort, bukan garansi -- lihat CONFIG_NOTES.md.
+        Struktur response: "external_code" ada di TOP-LEVEL tiap record
+        (bukan nested di "product_category" seperti field lain), sementara
+        id eSuite yang dibutuhkan buat payload /product ("product_category.id"
+        di _to_esuite_payload()) tetap nested di "product_category.id" --
+        TIDAK berubah dari sebelumnya.
+
+        4 record lama tanpa external_code (nama: "All", "Saleable" huruf
+        kecil, "Expenses", "dummy category" -- seed bawaan eSuite dari
+        sebelum bridge kita pernah push) OTOMATIS tidak ikut match di sini,
+        dan ini BENAR (bukan data yang pernah kita push). Ini sekaligus
+        menghilangkan risiko collision nama yang sempat kebukti nyata di data
+        (2 kategori "SALEABLE" vs "Saleable" beda case) -- sekarang dibedakan
+        by external_code yang unik per Odoo category id, bukan name lagi.
+
+        Odoo category name TIDAK lagi diperlukan untuk matching (beda dari
+        versi lama) -- jadi query self.odoo.get_categories_by_ids() dihapus,
+        cukup pakai categ_id numerik yang sudah ada di data products.
 
         Return: {odoo_category_id: esuite_category_id}
         """
         odoo_categ_ids = list({p["categ_id"][0] for p in products if p.get("categ_id")})
-        odoo_name_by_id = self.odoo.get_categories_by_ids(odoo_categ_ids)
 
-        esuite_id_by_name = {}
+        esuite_id_by_external_code = {}
         page = 1
         limit = 100
 
@@ -305,10 +313,10 @@ class ProductSyncService:
             records = pulled.get("data") or []
 
             for r in records:
+                code = r.get("external_code")
                 cat = r.get("product_category") or {}
-                name = cat.get("name")
-                if name:
-                    esuite_id_by_name[name] = cat.get("id")
+                if code and cat.get("id"):
+                    esuite_id_by_external_code[code] = cat["id"]
 
             meta = pulled.get("meta") or {}
             total_page = meta.get("total_page", 1)
@@ -317,8 +325,9 @@ class ProductSyncService:
             page += 1
 
         result = {}
-        for odoo_id, name in odoo_name_by_id.items():
-            esuite_id = esuite_id_by_name.get(name)
+        for odoo_id in odoo_categ_ids:
+            expected_code = f"{CATEGORY_EXTERNAL_CODE_PREFIX}{odoo_id}"
+            esuite_id = esuite_id_by_external_code.get(expected_code)
             if esuite_id:
                 result[odoo_id] = esuite_id
 
