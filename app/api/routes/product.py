@@ -36,11 +36,13 @@ def sync_product(
     with_variant: bool = Query(
         default=False,
         description=(
-            "OPSIONAL (12 Agustus 2026, BARU, belum divalidasi skala besar) -- "
-            "kalau True, tiap produk yang berhasil di-push juga otomatis "
-            "push 1 product-variant (1:1), sesuai saran vendor (dashboard "
-            "sales nampilin data Variant, bukan Product). Default False "
-            "(opt-in) sampai fitur ini tervalidasi."
+            "OPSIONAL -- kalau True, tiap produk ikut sertakan 1 variant "
+            "(1:1) LANGSUNG di payload /product (embedded, sesuai fix "
+            "resmi vendor 13 Agustus 2026 -- bukan push /product-variant "
+            "terpisah lagi seperti versi lama). Bridge otomatis resolve id "
+            "variant existing dulu (by external_code) sebelum push, supaya "
+            "tidak bikin variant duplikat kalau produk ini sudah pernah "
+            "punya variant. Default False (opt-in)."
         ),
     ),
     include_payload: bool = Query(

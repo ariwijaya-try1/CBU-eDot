@@ -88,7 +88,29 @@ class ProductSyncService:
             products = products[:limit]
 
         category_id_map = self._resolve_category_ids(products)
-        payload = [self._to_esuite_payload(p, category_id_map) for p in products]
+
+        # with_variant -- REVISI 13 Agustus 2026 (rombak total). Sebelumnya
+        # push "/product-variant" TERPISAH setelah "/product" -- vendor
+        # konfirmasi ini SALAH untuk tujuan tampil di halaman produk (tab
+        # "Attribute & Variant" baca dari field "variants[]" yang di-EMBED
+        # di dalam dokumen /product itu sendiri, bukan dari collection
+        # /product-variant berdiri sendiri). Sekarang variants[] di-embed
+        # LANGSUNG di payload /product, tidak ada push terpisah lagi.
+        #
+        # WAJIB resolve id variant yang SUDAH ADA dulu sebelum push --
+        # matching update di sisi eSuite pakai "id", BUKAN "external_code".
+        # Kalau id dikosongkan tiap kali push, eSuite generate variant BARU
+        # tiap sync -> duplikat menumpuk (instruksi eksplisit vendor,
+        # 13 Agustus 2026). Lihat SESSION_TRANSFER_NOTE.md poin 25.
+        existing_variant_ids = {}
+        if with_variant:
+            codes_wanted = {f"{EXTERNAL_CODE_PREFIX}{p['id']}" for p in products}
+            existing_variant_ids = self._resolve_existing_variant_ids(codes_wanted)
+
+        payload = [
+            self._to_esuite_payload(p, category_id_map, with_variant, existing_variant_ids)
+            for p in products
+        ]
 
         # Batching -- REVISI 12 Agustus 2026, opsional (beda dari Customer yang
         # SELALU batch). Kalau batch_size tidak diisi, 1 batch = semua produk
@@ -98,7 +120,6 @@ class ProductSyncService:
         batches = [payload[i : i + size] for i in range(0, len(payload), size)] or [[]]
 
         batch_results = []
-        variant_results = []
         synced_count = 0
         failed_count = 0
 
@@ -120,19 +141,13 @@ class ProductSyncService:
                 # sudah dikonfirmasi & dicatat di SESSION_TRANSFER_NOTE.md
                 # poin 20. external_codes tetap selalu tampil (cukup buat
                 # tracking mana yang sukses/gagal tanpa payload penuh).
+                # Catatan: kalau with_variant=True, "variants[]" sudah
+                # ke-embed di tiap item batch -- jadi payload_sent di sini
+                # OTOMATIS include variant-nya juga, tidak perlu key terpisah.
                 if include_payload:
                     batch_entry["payload_sent"] = batch
                 batch_results.append(batch_entry)
                 synced_count += len(batch)
-
-                # with_variant -- BARU 12 Agustus 2026, DEFAULT FALSE (opt-in).
-                # Belum divalidasi end-to-end skala besar, jadi sengaja tidak
-                # otomatis nyala biar tidak ada efek samping tak terduga ke
-                # produk yang belum ditest. Lihat _sync_variants_for_batch().
-                if with_variant:
-                    variant_results.append(
-                        self._sync_variants_for_batch(batch, event, include_payload)
-                    )
             except AppError as e:
                 # Pola sama dengan customer_sync_service.py -- di-catch per
                 # batch, batch lain tetap lanjut.
@@ -158,7 +173,16 @@ class ProductSyncService:
             "batches": batch_results,
         }
         if with_variant:
-            result["variant_sync"] = variant_results
+            # variant_summary -- ganti "variant_sync" lama (13 Agustus 2026).
+            # Tidak ada push terpisah lagi buat dilaporkan -- variant sudah
+            # ke-embed di payload /product di atas. Ini cuma ringkasan
+            # berapa yang linked ke variant id existing (update, aman dari
+            # duplikat) vs berapa yang baru (id dikosongkan, eSuite generate).
+            result["variant_summary"] = {
+                "total": len(payload),
+                "linked_to_existing_variant": len(existing_variant_ids),
+                "new_variant": len(payload) - len(existing_variant_ids),
+            }
 
         log_sync_result("product", event, result)
         return result
@@ -190,99 +214,36 @@ class ProductSyncService:
             ids.append(int(id_part))
         return ids
 
-    def _sync_variants_for_batch(
-        self, product_batch: list[dict], event: str, include_payload: bool = False
-    ) -> dict:
+    def _resolve_existing_variant_ids(self, codes_wanted: set[str]) -> dict[str, str]:
         """
-        Push 1 product-variant per product (1:1) buat 1 batch produk yang
-        BARU SAJA berhasil di-push -- BARU 12 Agustus 2026, konfirmasi
-        vendor: dashboard sales eSuite nampilin data Product VARIANT, bukan
-        Product langsung. Karena CBU tidak punya konsep variant asli (tiap
-        ukuran/kemasan = product.product Odoo terpisah), 1 variant generic
-        per produk sudah cukup mewakili -- BUKAN karena ada variant beneran.
+        Resolve id variant yang SUDAH ADA di eSuite (by external_code)
+        SEBELUM push -- ROMBAK TOTAL 13 Agustus 2026 sesuai instruksi vendor
+        (lihat SESSION_TRANSFER_NOTE.md poin 25). Root cause lama: variant
+        di-push ke "/product-variant" TERPISAH dari "/product" -- itu cuma
+        bikin record "mandiri" yang TIDAK ter-link ke field "variants[]"
+        milik produk induknya (makanya kosong di tab "Attribute & Variant"
+        halaman Detail Produk). Fix vendor: embed "variants[]" LANGSUNG di
+        payload "/product" (lihat _to_esuite_payload()).
 
-        Alur: POST /product tidak balikin id eSuite (reconcile via
-        external_code, lihat SESSION_TRANSFER_NOTE.md poin 4) -- jadi resolve
-        dulu id-nya lewat EsuiteClient.find_by_external_codes(), baru push
-        ke /product-variant referensi "product": {"id": ...}.
+        WAJIB resolve dulu -- matching update variant di sisi eSuite pakai
+        "id", BUKAN "external_code". Kalau "variants[].id" dikosongkan tiap
+        kali push (padahal variant-nya sudah pernah ada), eSuite generate
+        variant BARU tiap sync -> duplikat menumpuk. external_code variant
+        = SAMA PERSIS dengan external_code product induknya.
 
-        external_code variant = SAMA PERSIS dengan external_code product
-        induknya (bukan prefix baru) -- berdasarkan data nyata yang sudah
-        diobservasi (variant existing yang external_code-nya identik dengan
-        product induk, lihat CONFIG_NOTES.md).
-
-        Best-effort: eSuite proses async, jadi id produk yang baru dipush
-        BISA SAJA belum ke-resolve (belum selesai diproses). Produk yang
-        gagal resolve di-skip & dilaporkan di "skipped" -- TIDAK bikin
-        seluruh batch product gagal. Re-run manual buat yang skip.
+        Return: {external_code: variant_id} -- cuma untuk yang SUDAH ADA
+        (ketemu di GET /product-variant). external_code yang tidak ada di
+        return dict berarti produk baru -- _to_esuite_payload() akan
+        kosongkan "variants[0].id" supaya eSuite auto-generate.
         """
-        codes_wanted = {item["external_code"] for item in product_batch}
-        resolved = self.esuite.find_by_external_codes("product", codes_wanted)
-
-        variant_payload = []
-        skipped = []
-        for item in product_batch:
-            code = item["external_code"]
-            record = resolved.get(code)
-            esuite_id = record.get("id") if record else None
-            if not esuite_id:
-                skipped.append(code)
-                continue
-            variant_payload.append(
-                {
-                    "product": {"id": esuite_id},
-                    "external_code": code,
-                    "name": item["name"],
-                    "status": "active",
-                    "product_type": item["product_type"],
-                    "product_category": item["product_category"],
-                    "base_uom": item["base_uom"],
-                    "currency": item["currency"],
-                    # cost & base_price -- BARU 13 Agustus 2026. Sebelumnya
-                    # tidak dikirim sama sekali (ikut contoh payload vendor
-                    # yang juga tidak mencantumkan field ini) -- akibatnya
-                    # SEMUA variant punya base_price: 0 & is_price_set: false
-                    # di eSuite (dikonfirmasi lewat GET /product-variant).
-                    # Karena dashboard sales eSuite nampilin data Variant
-                    # (bukan Product, lihat SESSION_TRANSFER_NOTE.md poin 18a),
-                    # variant WAJIB bawa base_price sendiri, mirror dari produk
-                    # induknya -- kalau tidak, harga di dashboard sales
-                    # tampil Rp 0. `cost` ikut dikirim 0 juga, konsisten
-                    # dengan kebijakan cost di produk (lihat _to_esuite_payload()).
-                    "cost": item["cost"],
-                    "base_price": item["base_price"],
-                }
-            )
-
-        if not variant_payload:
-            return {"pushed": 0, "skipped": skipped, "esuite_response": None}
-
-        try:
-            esuite_result = self.esuite.push("product-variant", event=event, data=variant_payload)
-            entry = {
-                "pushed": len(variant_payload),
-                "skipped": skipped,
-                "external_codes": [v["external_code"] for v in variant_payload],
-                "esuite_response": esuite_result,
-            }
-            # payload_sent -- opt-in, ikut flag include_payload yang sama
-            # dengan batch product (13 Agustus 2026, lihat SESSION_TRANSFER_NOTE.md poin 20).
-            if include_payload:
-                entry["payload_sent"] = variant_payload
-            return entry
-        except AppError as e:
-            # Kegagalan push variant TIDAK di-propagate -- produk induknya
-            # sudah berhasil, jangan sampai laporan sync product jadi error
-            # gara-gara variant. Caller cek "variant_sync" di response.
-            entry = {
-                "pushed": 0,
-                "skipped": skipped,
-                "attempted": [v["external_code"] for v in variant_payload],
-                "error": e.to_dict()["error"],
-            }
-            if include_payload:
-                entry["payload_sent"] = variant_payload
-            return entry
+        if not codes_wanted:
+            return {}
+        resolved = self.esuite.find_by_external_codes("product-variant", codes_wanted)
+        return {
+            code: record["id"]
+            for code, record in resolved.items()
+            if record and record.get("id")
+        }
 
     def _resolve_category_ids(self, products: list) -> dict:
         """
@@ -345,7 +306,13 @@ class ProductSyncService:
             )
         return mapped
 
-    def _to_esuite_payload(self, product: dict, category_id_map: dict) -> dict:
+    def _to_esuite_payload(
+        self,
+        product: dict,
+        category_id_map: dict,
+        with_variant: bool = False,
+        existing_variant_ids: dict | None = None,
+    ) -> dict:
         # categ_id & uom_id dari Odoo berbentuk [id, display_name] (many2one).
         categ = product.get("categ_id")
         uom = product.get("uom_id")
@@ -360,7 +327,7 @@ class ProductSyncService:
         external_code = f"ODOO-PROD-{product['id']}"
         base_uom = self._resolve_uom(uom[1] if uom else "")
 
-        return {
+        payload = {
             "external_code": external_code,
             "name": product["name"],
             "status": "active",
@@ -421,3 +388,41 @@ class ProductSyncService:
             "base_price": product.get("list_price") or 0,
             "currency": CURRENCY,
         }
+
+        # variants -- EMBED LANGSUNG di payload /product (13 Agustus 2026,
+        # rombak sesuai fix vendor -- lihat _resolve_existing_variant_ids()
+        # & SESSION_TRANSFER_NOTE.md poin 25). Keputusan bisnis lama tetap
+        # berlaku: Product : Product Variant = 1:1 (tidak ada variant asli
+        # secara operasional CBU, cuma 1 variant generic per produk).
+        #
+        # "id": kalau produk ini SUDAH pernah punya variant (ketemu di
+        # existing_variant_ids, hasil resolve GET /product-variant by
+        # external_code), WAJIB isi id yang sama supaya eSuite UPDATE
+        # variant yang sudah ada -- bukan generate baru (matching di sisi
+        # eSuite pakai id, BUKAN external_code). Kalau belum pernah ada,
+        # dikosongkan ("") -- eSuite auto-generate & langsung link ke
+        # product.variants[].
+        #
+        # Field lain ikut PERSIS skema resmi dari vendor (bukan skema lama
+        # /product-variant standalone yang kita pakai sebelumnya) -- TIDAK
+        # ADA "base_price" di level variant (kemungkinan inherit dari
+        # base_price produk induk di payload yang sama, BELUM dikonfirmasi
+        # eksplisit -- perlu ditest). "extra_price" field baru, diisi 0
+        # (markup di atas base_price, kalau ada).
+        if with_variant:
+            existing_id = (existing_variant_ids or {}).get(external_code, "")
+            payload["variants"] = [
+                {
+                    "id": existing_id,
+                    "name": product["name"],
+                    "external_code": external_code,
+                    "attributes": [],
+                    "sku": "",
+                    "barcode": "",
+                    "cost": 0,
+                    "extra_price": 0,
+                    "status": "active",
+                }
+            ]
+
+        return payload
