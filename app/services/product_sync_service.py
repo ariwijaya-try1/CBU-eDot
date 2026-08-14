@@ -225,25 +225,45 @@ class ProductSyncService:
         halaman Detail Produk). Fix vendor: embed "variants[]" LANGSUNG di
         payload "/product" (lihat _to_esuite_payload()).
 
+        REVISI KEDUA 14 Agustus 2026 -- sumber resolve DIPINDAH dari
+        GET /product-variant (collection standalone/legacy) ke GET /product
+        (baca "variants[]" yang ter-embed). Ditemukan dari test nyata
+        (ODOO-PROD-9034 & ODOO-PROD-8857): GET /product-variant TIDAK PERNAH
+        mengembalikan field "id" (selalu string kosong -- dicek 13/13 record),
+        jadi filter "record.get('id')" di bawah SELALU gagal, resolve SELALU
+        dianggap "belum ada", dan variant baru terus dibuat tiap push --
+        walau external_code-nya sudah cocok. Ini penyebab duplikat variant
+        yang muncul lagi meski sudah pakai flow embed baru. GET /product
+        "variants[].id" terbukti berisi id asli yang valid -- itu satu-
+        satunya sumber benar sesuai arsitektur baru vendor.
+
         WAJIB resolve dulu -- matching update variant di sisi eSuite pakai
         "id", BUKAN "external_code". Kalau "variants[].id" dikosongkan tiap
         kali push (padahal variant-nya sudah pernah ada), eSuite generate
         variant BARU tiap sync -> duplikat menumpuk. external_code variant
         = SAMA PERSIS dengan external_code product induknya.
 
-        Return: {external_code: variant_id} -- cuma untuk yang SUDAH ADA
-        (ketemu di GET /product-variant). external_code yang tidak ada di
-        return dict berarti produk baru -- _to_esuite_payload() akan
-        kosongkan "variants[0].id" supaya eSuite auto-generate.
+        CATATAN: kalau produk sudah kadung punya variant duplikat (sisa era
+        push /product-variant terpisah, external_code kosong), entry lama
+        itu TIDAK otomatis kebersihkan oleh fungsi ini -- ini cuma cegah
+        duplikat BARU, bukan bersihkan yang sudah ada. Duplikat existing
+        perlu dibersihkan manual/vendor (lihat SESSION_TRANSFER_NOTE.md).
+
+        Return: {external_code: variant_id} -- cuma untuk produk yang SUDAH
+        punya variant dengan external_code cocok PERSIS. external_code yang
+        tidak ada di return dict berarti produk baru -- _to_esuite_payload()
+        akan kosongkan "variants[0].id" supaya eSuite auto-generate.
         """
         if not codes_wanted:
             return {}
-        resolved = self.esuite.find_by_external_codes("product-variant", codes_wanted)
-        return {
-            code: record["id"]
-            for code, record in resolved.items()
-            if record and record.get("id")
-        }
+        resolved = self.esuite.find_by_external_codes("product", codes_wanted)
+        result = {}
+        for code, product_record in resolved.items():
+            for variant in product_record.get("variants") or []:
+                if variant.get("external_code") == code and variant.get("id"):
+                    result[code] = variant["id"]
+                    break
+        return result
 
     def _resolve_category_ids(self, products: list) -> dict:
         """
