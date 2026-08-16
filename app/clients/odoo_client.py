@@ -309,12 +309,71 @@ class OdooClient:
             "fields": [
                 "id", "name", "company_type", "customer_rank",
                 "supplier_rank", "active", "email", "phone",
+                # user_id -- field "Salesperson" (18 Agustus 2026, lihat
+                # get_salespersons()/get_customers_by_salesperson() di bawah).
+                # Ikut ditampilkan di sini juga (additif, tidak ubah signature)
+                # supaya GET /odoo/customer & /odoo/contact langsung kelihatan
+                # salesperson-nya tanpa perlu panggil endpoint terpisah.
+                "user_id",
             ],
         }
         if limit:
             kwargs["limit"] = limit
 
         return self._execute("res.partner", "search_read", domain, kwargs)
+
+    def get_salespersons(self, limit: int | None = None, name: str | None = None):
+        """
+        GET debug -- res.users, dipakai GET /odoo/salesperson (18 Agustus 2026).
+
+        ASUMSI, BELUM DIKONFIRMASI USER (lihat sales_entities_gap.md poin
+        "apakah CBU pakai hr.employee untuk data Salesman"): "Salesperson"
+        di sini diartikan sebagai konvensi standar Odoo Sales App --
+        res.users yang di-assign lewat field res.partner.user_id (label UI
+        "Salesperson"). Filter share=False buat exclude portal/user eksternal
+        (cuma internal user yang biasanya jadi salesperson). Kalau ternyata
+        CBU nyimpen data salesperson terpisah di hr.employee, endpoint ini
+        perlu disesuaikan -- kabari kalau hasilnya kelihatan gak sesuai
+        (mis. yang keluar cuma akun admin/teknis, bukan tim sales beneran).
+        """
+        conditions = [("share", "=", False)]
+        if name:
+            conditions.append(("name", "ilike", name))
+        domain = [conditions]
+
+        kwargs = {"fields": ["id", "name", "login", "email", "active"]}
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("res.users", "search_read", domain, kwargs)
+
+    def get_customers_by_salesperson(self, salesperson_id: int, limit: int | None = None):
+        """
+        GET debug -- res.partner yang field Salesperson (user_id) = salesperson_id
+        tertentu, dipakai GET /odoo/customer-by-salesperson (18 Agustus 2026).
+        """
+        domain = [[("user_id", "=", salesperson_id)]]
+        kwargs = {
+            "fields": ["id", "name", "company_type", "customer_rank", "supplier_rank", "user_id"],
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("res.partner", "search_read", domain, kwargs)
+
+    def get_salesperson_by_customer(self, customer_id: int):
+        """
+        GET debug -- balikan Salesperson (res.users, dari field user_id) yang
+        di-assign ke 1 customer tertentu, dipakai GET /odoo/salesperson-by-customer
+        (18 Agustus 2026). Return None kalau customer_id tidak ditemukan.
+        """
+        records = self._execute(
+            "res.partner",
+            "read",
+            [[customer_id]],
+            {"fields": ["id", "name", "user_id"]},
+        )
+        return records[0] if records else None
 
     def get_customer_categories(self, limit: int | None = None):
         """
