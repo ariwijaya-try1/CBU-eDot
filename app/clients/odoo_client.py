@@ -130,17 +130,21 @@ class OdooClient:
 
     def get_stock_by_warehouse(self, warehouse_id: int, product_ids: list | None = None):
         """
-        Sumber data on_hand/free_to_use PER WAREHOUSE untuk entity Stock
-        Matrix di eSuite (14 Agustus 2026, prep -- belum dipakai service
-        manapun, stock_sync_service.py belum dibuat, lihat
-        stock_sync_progress.md).
+        Sumber data stok PER WAREHOUSE untuk entity Stock Matrix di eSuite,
+        dipakai stock_sync_service.py (lihat stock_sync_progress.md).
 
         BEDA dari get_products(): field 'qty_available'/'free_qty' di
         product.product itu GLOBAL (semua lokasi digabung) KECUALI dikasih
         context 'warehouse' -- Odoo native support ini lewat compute
         context, jadi TIDAK perlu baca stock.quant manual/group-by sendiri.
-        on_hand -> qty_available (context-scoped ke warehouse ini).
-        free_to_use -> free_qty (context-scoped ke warehouse ini).
+
+        UPDATE 15 Agustus 2026 (skema resmi vendor + keputusan bisnis baru,
+        lihat stock_sync_progress.md): field eSuite "on_hand" (dikirim ke
+        /stock-matrix -- TIDAK ADA field "free_to_use" sebagai input, itu
+        computed otomatis di GET) diisi dari 'qty_available' (stok fisik/
+        on-hand asli) -- BUKAN 'free_qty' seperti draft awal. 'free_qty'
+        tetap diambil di sini (siapa tahu dibutuhkan lagi nanti), tapi
+        TIDAK dipakai stock_sync_service.py.
 
         Domain Saleable sengaja SAMA dengan get_products() -- cuma produk
         yang disync ke eSuite yang perlu stok-nya disync juga.
