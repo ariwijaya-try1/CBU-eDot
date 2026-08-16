@@ -231,6 +231,105 @@ class OdooClient:
             {"fields": ["id", "name", "company_type"]},
         )
 
+    # ------------------------------------------------------------------
+    # GET / inspeksi mentah (16 Agustus 2026) -- dipakai
+    # app/api/routes/odoo_get.py (grup Swagger "odoo - Get"), TUJUANNYA
+    # cuma buat cek data Odoo 19 lewat Swagger/Postman. BEDA dari
+    # method-method di atas (get_products/get_customers/dst) yang punya
+    # domain filter khusus proses sync -- method di bawah ini SENGAJA
+    # tanpa filter Saleable/list_price/dst supaya bisa lihat data apa
+    # adanya. TIDAK dipakai proses sync manapun (product_sync_service.py
+    # dkk tetap pakai method lama, tidak disentuh).
+    # ------------------------------------------------------------------
+
+    def get_products_raw(self, limit: int | None = None, ids: list | None = None, name: str | None = None):
+        """GET mentah product.product -- tanpa filter Saleable/list_price."""
+        conditions = []
+        if ids:
+            conditions.append(("id", "in", ids))
+        if name:
+            conditions.append(("name", "ilike", name))
+        domain = [conditions] if conditions else [[]]
+
+        kwargs = {
+            "fields": [
+                "id", "name", "default_code", "categ_id", "list_price",
+                "standard_price", "qty_available", "free_qty", "uom_id", "active",
+            ],
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("product.product", "search_read", domain, kwargs)
+
+    def get_uoms(self, limit: int | None = None, name: str | None = None):
+        """GET mentah uom.uom (Unit of Measure)."""
+        conditions = [("name", "ilike", name)] if name else []
+        domain = [conditions] if conditions else [[]]
+
+        kwargs = {"fields": ["id", "name", "category_id", "uom_type", "factor", "active"]}
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("uom.uom", "search_read", domain, kwargs)
+
+    def get_contacts(
+        self,
+        limit: int | None = None,
+        name: str | None = None,
+        customer_only: bool = False,
+        supplier_only: bool = False,
+        active_only: bool = True,
+    ):
+        """
+        GET mentah res.partner -- dipakai GET /odoo/contact & GET /odoo/customer.
+        BEDA dari get_customers() (dipakai proses sync /sync/customers):
+        method ini buat inspeksi manual/fleksibel, bukan proses sync.
+
+        Konvensi Odoo standar (dikonfirmasi user 16 Agustus 2026):
+        - customer_rank > 0 -> kontak dianggap pernah/bisa jadi Customer
+        - customer_rank = 0 -> belum pernah jadi customer
+        - supplier_rank > 0 -> kontak pernah/merupakan Vendor
+        customer_only=True -> filter customer_rank > 0 (dipakai GET /odoo/customer).
+        supplier_only=True -> filter supplier_rank > 0.
+        Default (keduanya False) -> semua kontak apa adanya (GET /odoo/contact).
+        """
+        conditions = []
+        if customer_only:
+            conditions.append(("customer_rank", ">", 0))
+        if supplier_only:
+            conditions.append(("supplier_rank", ">", 0))
+        if active_only:
+            conditions.append(("active", "=", True))
+        if name:
+            conditions.append(("name", "ilike", name))
+        domain = [conditions] if conditions else [[]]
+
+        kwargs = {
+            "fields": [
+                "id", "name", "company_type", "customer_rank",
+                "supplier_rank", "active", "email", "phone",
+            ],
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("res.partner", "search_read", domain, kwargs)
+
+    def get_customer_categories(self, limit: int | None = None):
+        """
+        GET mentah res.partner.category (Contact Tags) -- kandidat SSOT buat
+        Customer Group/Category (lihat sales_entities_gap.md, open question
+        14 Agustus 2026 & klarifikasi 16 Agustus soal Group vs Category).
+        Dibikin biar bisa dicek LANGSUNG lewat Swagger apakah tag FS/MT/GT/
+        HORECA atau grup afiliasi (mis. "Pepito Group") sudah ada di Odoo.
+        """
+        kwargs = {"fields": ["id", "name", "parent_id", "color"]}
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("res.partner.category", "search_read", [[]], kwargs)
+
     @staticmethod
     def _name_in_domain(names: list):
         """Bangun domain OR: name ilike names[0] OR name ilike names[1] OR ..."""
