@@ -13,10 +13,12 @@ def sync_stock_matrix(
         description=(
             "OPSIONAL -- sync stok produk TERTENTU saja, comma-separated, "
             "format 'ODOO-PROD-{id}' (mis. ODOO-PROD-18374,ODOO-PROD-8857). "
-            "SANGAT DISARANKAN dipakai dulu (scoped) sebelum full sync -- "
-            "baru ~30 dari 1241 produk yang confirmed punya product-variant "
-            "ke-push ke eSuite; sync stok produk yang variant-nya belum ada "
-            "kemungkinan besar gagal match. Kosongkan untuk semua produk Saleable."
+            "Kalau diisi: cek eSuite CUMA utk id ini (cepat, targeted). Kalau "
+            "dikosongkan: service tarik SEMUA halaman GET /product eSuite "
+            "dulu buat nemuin produk mana yang punya variant valid (bisa "
+            "makan waktu lebih lama tergantung jumlah produk di eSuite), "
+            "baru query stok Odoo utk yang ketemu -- guard-nya SELALU jalan "
+            "baik parameter ini diisi maupun tidak."
         ),
     ),
     limit: int | None = Query(
@@ -49,7 +51,13 @@ def sync_stock_matrix(
     asli, bukan free_qty). Nilai bersifat absolute (set-to-target) &
     idempotent -- kirim ulang nilai sama tidak mengubah apa-apa.
 
-    Butuh Product & Product Variant sudah ke-push duluan (POST /sync/product
+    GUARD (eSuite-first): service ini cek eSuite DULU (GET /product, cari
+    produk yang punya product-variant valid ter-embed) sebelum nyentuh Odoo
+    sama sekali -- baru query stok Odoo SPESIFIK ke produk yang ketemu.
+    Response include "verified_in_esuite" (jumlah produk yang lolos guard)
+    & "skipped_not_found_in_odoo" (produk yang verified di eSuite tapi
+    ternyata gak ketemu di query stok Odoo, mis. sudah di-archive). Butuh
+    Product & Product Variant sudah ke-push duluan (POST /sync/product
     dengan with_variant=True) untuk produk yang mau di-sync stoknya.
     """
     return service.sync(

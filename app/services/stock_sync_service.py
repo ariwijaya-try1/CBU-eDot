@@ -54,13 +54,31 @@ class StockSyncService:
     - Nilai bersifat absolute/set-to-target (bukan delta) & idempotent --
       dikonfirmasi resmi vendor, tidak perlu logic delta di sisi bridge.
 
-    PENTING (belum jadi blocker koding, tapi blocker ROLLOUT penuh): baru
-    ~30 dari 1241 produk yang confirmed punya product-variant ke-push ke
-    eSuite (embed 1:1). Push stock buat produk yang variant-nya BELUM ada
-    di eSuite kemungkinan besar gagal match ("product_variant not found").
-    Makanya parameter "external_codes" di bawah PENTING dipakai buat scoped
-    test dulu ke produk yang sudah settled, sebelum full rollout menunggu
-    mass re-push produk selesai.
+    PENTING -- GUARD, eSuite-FIRST (16 Agustus 2026, revisi ke-2). Baru ~30
+    dari 1241 produk yang confirmed punya product-variant ke-push ke eSuite
+    (embed 1:1). Supaya stok yang di-push TIDAK PERNAH nyasar ke produk yang
+    variant-nya belum ada, sync() ini SELALU cek eSuite DULU (bukan cek
+    belakangan) buat nentuin id produk mana yang aman -- baru query stok
+    Odoo SPESIFIK ke id-id itu:
+
+      1. eSuite (GET /product) -> kumpulin id produk yang punya
+         product-variant valid ter-embed ("variants[].id" terisi, pola
+         identik product_sync_service.py::_resolve_existing_variant_ids()).
+      2. Odoo (get_stock_by_warehouse) -> query stok HANYA utk id-id hasil
+         langkah 1 (product_ids terarah, bukan tarik semua lalu buang).
+      3. Push ke /stock-matrix.
+
+    REVISI dari versi pertama (yang query Odoo dulu baru cek eSuite):
+    urutan lama BOROS karena himpunan yang dicek ke eSuite jadi besar
+    (~1241 code, padahal cuma ~30 yang bakal ketemu) -- find_by_external_codes()
+    scan hampir semua halaman /product buat cari yang gak akan pernah ketemu.
+    Cek eSuite dulu (himpunan kecil, murah) baru Odoo (query terarah) jauh
+    lebih hemat, apalagi makin lama katalog Odoo (1241+) makin jauh lebih
+    besar daripada yang sudah confirmed di eSuite.
+
+    Parameter "external_codes" (kalau diisi) mempersempit LANGKAH 1 juga --
+    pakai find_by_external_codes() yang early-exit (bukan full pull semua
+    halaman), lebih hemat lagi kalau memang cuma mau cek beberapa produk.
     """
 
     def __init__(self):
@@ -75,17 +93,31 @@ class StockSyncService:
         batch_size: int | None = None,
         include_payload: bool = False,
     ):
-        product_ids = self._parse_external_codes(external_codes) if external_codes else None
-
         warehouses = self._get_in_scope_warehouses()
 
-        # Ambil stok per warehouse -- 1 pemanggilan get_stock_by_warehouse()
-        # per warehouse (context Odoo cuma bisa di-scope ke 1 warehouse per
-        # call, lihat odoo_client.py::get_stock_by_warehouse()).
+        # LANGKAH 1 (eSuite-FIRST, lihat docstring kelas) -- tentuin dulu id
+        # produk Odoo mana yang AMAN (product-variant-nya udah confirmed ada
+        # di eSuite), SEBELUM nyentuh Odoo sama sekali buat query stok.
+        if external_codes:
+            wanted_ids = self._parse_external_codes(external_codes)
+            verified_ids = self._resolve_verified_variant_ids(wanted_ids)
+        else:
+            verified_ids = self._pull_all_verified_variant_ids()
+
+        if not verified_ids:
+            raise ValidationError(
+                "Tidak ada produk dengan product-variant valid di eSuite (cek external_codes kalau "
+                "diisi, atau push Product dulu lewat POST /sync/product dengan with_variant=True)"
+            )
+
+        # LANGKAH 2 -- query stok Odoo SPESIFIK ke id yang sudah confirmed di
+        # langkah 1 (bukan tarik semua produk Saleable lalu buang yang gak
+        # kepake). 1 pemanggilan get_stock_by_warehouse() per warehouse
+        # (context Odoo cuma bisa di-scope ke 1 warehouse per call).
         rows_by_warehouse = {}
         total_matched = 0
         for wh in warehouses:
-            stock_rows = self.odoo.get_stock_by_warehouse(wh["id"], product_ids=product_ids)
+            stock_rows = self.odoo.get_stock_by_warehouse(wh["id"], product_ids=verified_ids)
             total_matched += len(stock_rows)
             # limit -- diagnostic aid (pola sama dengan product/customer sync),
             # diterapkan PER WAREHOUSE supaya tetap ada baris buat tiap
@@ -96,9 +128,18 @@ class StockSyncService:
 
         if total_matched == 0:
             raise ValidationError(
-                "Tidak ada stok produk Saleable ditemukan di Odoo untuk warehouse in-scope "
-                "(cek juga external_codes kalau diisi)"
+                "Produk sudah confirmed punya product-variant di eSuite, tapi tidak ketemu datanya "
+                "di Odoo (category Saleable / mungkin sudah di-archive) -- cek lagi id-nya"
             )
+
+        # skipped_not_found_in_odoo -- id yang confirmed ADA di eSuite (langkah 1)
+        # tapi TERNYATA tidak ketemu di query stok Odoo langkah 2 (misal produk
+        # sudah di-archive/keluar domain Saleable di Odoo setelah variant-nya
+        # sempat di-push). Kasus jarang, tapi dicatat buat visibility -- bukan error.
+        found_ids = {row["id"] for wh in warehouses for row in rows_by_warehouse[wh["id"]]}
+        skipped_not_found_in_odoo = sorted(
+            f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}" for pid in set(verified_ids) - found_ids
+        )
 
         payload = [
             self._to_esuite_payload(row, wh)
@@ -108,8 +149,11 @@ class StockSyncService:
 
         # Batching -- pola sama dengan product_sync_service.py: opsional,
         # default None -> 1 batch semua baris sekaligus.
+        # Payload di sini secara teori tetap bisa kosong (mis. semua produk
+        # verified ternyata kena "limit" jadi 0 per warehouse) -- guard ini
+        # cegah "batch_size or len(payload)" jadi 0 & bikin range() step=0 error.
         size = batch_size or len(payload)
-        batches = [payload[i : i + size] for i in range(0, len(payload), size)] or [[]]
+        batches = [payload[i : i + size] for i in range(0, len(payload), size)] if payload else []
 
         batch_results = []
         synced_count = 0
@@ -150,8 +194,10 @@ class StockSyncService:
                 failed_count += len(batch)
 
         result = {
+            "verified_in_esuite": len(verified_ids),
             "total_matched_in_odoo": total_matched,
             "total_sent": len(payload),
+            "skipped_not_found_in_odoo": skipped_not_found_in_odoo,
             "batch_size": size,
             "batch_count": len(batches),
             "synced_count": synced_count,
@@ -159,7 +205,12 @@ class StockSyncService:
             "batches": batch_results,
         }
 
-        log_sync_result("stock-matrix", event, result)
+        note = (
+            f"{len(skipped_not_found_in_odoo)} produk verified di eSuite tapi tidak ketemu di Odoo"
+            if skipped_not_found_in_odoo
+            else ""
+        )
+        log_sync_result("stock-matrix", event, result, note=note)
         return result
 
     def _get_in_scope_warehouses(self) -> list:
@@ -182,6 +233,80 @@ class StockSyncService:
             raise ValidationError("Tidak ada stock.warehouse aktif untuk badan usaha in-scope")
 
         return warehouses
+
+    def _resolve_verified_variant_ids(self, wanted_ids: list[int]) -> list[int]:
+        """
+        GUARD, versi TARGETED -- dipakai kalau `external_codes` diisi user.
+        Cek eSuite CUMA utk id yang diminta lewat `find_by_external_codes()`
+        (early-exit begitu semua code ketemu) -- lebih hemat daripada full
+        pull kalau himpunan yang mau dicek memang sudah spesifik/kecil.
+        """
+        if not wanted_ids:
+            return []
+        codes_wanted = {f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}" for pid in wanted_ids}
+        resolved = self.esuite.find_by_external_codes("product", codes_wanted)
+        return self._extract_verified_ids(resolved.values())
+
+    def _pull_all_verified_variant_ids(self) -> list[int]:
+        """
+        GUARD, versi FULL PULL -- dipakai kalau `external_codes` TIDAK
+        diisi (mau cek SEMUA produk yang ada di eSuite). Loop SEMUA halaman
+        GET /product, pola sama dengan warehouse_sync_service.py::
+        _resolve_branch_ids() / product_sync_service.py::_resolve_category_ids()
+        -- BUKAN pakai find_by_external_codes() (itu buat himpunan code yang
+        SUDAH diketahui/spesifik, bukan buat "temukan semua yang ada").
+        """
+        records = []
+        page = 1
+        limit = 200
+
+        while True:
+            pulled = self.esuite.pull("product", page=page, limit=limit)
+            records.extend(pulled.get("data") or [])
+
+            meta = pulled.get("meta") or {}
+            total_page = meta.get("total_page", 1)
+            if page >= total_page:
+                break
+            page += 1
+
+        return self._extract_verified_ids(records)
+
+    def _extract_verified_ids(self, product_records) -> list[int]:
+        """
+        GUARD -- inti logic-nya, dipakai KEDUA versi di atas. Dari sekumpulan
+        record /product (baik hasil find_by_external_codes().values() maupun
+        full pull), ekstrak id Odoo produk yang punya product-variant VALID
+        ter-embed (external_code cocok convention "ODOO-PROD-{id}" DAN
+        "variants[].id" terisi) -- pola & alasan IDENTIK dengan
+        product_sync_service.py::_resolve_existing_variant_ids() (baca
+        komentar di sana untuk detail lengkap kenapa harus baca
+        "variants[].id" dari GET /product, BUKAN dari GET /product-variant
+        yang collection standalone-nya selalu balikin id kosong).
+        Didefinisikan ulang di sini (bukan import silang antar service),
+        konsisten dengan pola tiap sync service independen di project ini.
+
+        Return: list id Odoo produk yang AMAN dikirim stoknya. Produk yang
+        tidak masuk return berarti: belum pernah di-push ke /product sama
+        sekali, ATAU sudah di-push tapi variant-nya belum ke-embed dengan
+        benar -- dua-duanya SAMA-SAMA di-skip dari stock-matrix (bukan tugas
+        service ini membedakan/memperbaiki, cukup jangan kirim).
+        """
+        ids = []
+        for record in product_records:
+            code = record.get("external_code")
+            if not code or not code.startswith(PRODUCT_EXTERNAL_CODE_PREFIX):
+                continue
+            id_part = code[len(PRODUCT_EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                continue
+            has_valid_variant = any(
+                v.get("external_code") == code and v.get("id")
+                for v in (record.get("variants") or [])
+            )
+            if has_valid_variant:
+                ids.append(int(id_part))
+        return ids
 
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
