@@ -389,6 +389,71 @@ class OdooClient:
 
         return self._execute("res.partner.category", "search_read", [[]], kwargs)
 
+    def get_pricelists(self, limit: int | None = None, ids: list | None = None, name: str | None = None):
+        """
+        GET mentah product.pricelist (header Pricelist) dari Odoo 19 -- dipakai
+        GET /odoo/pricelist (17 Agustus 2026), LANGKAH AWAL riset entity
+        Pricelist eSuite (POST /pricelists, belum pernah di-push -- lihat
+        sales_entities_gap.md & business_flow_brainstorm.md: "Pricelist harus
+        di-push karena nempel ke customer").
+
+        BELUM DIVALIDASI ke instance Odoo CBU (assistant tidak punya akses
+        network langsung ke Odoo dari sandbox ini) -- field dipilih dari model
+        standar Odoo Sales (`product.pricelist`), BUKAN hasil cek live.
+        SESSION_TRANSFER_NOTE.md (sesi lampau) sempat catat "Pricelist --
+        blocker RPC Odoo masih ada" tanpa detail lebih lanjut -- kalau field di
+        bawah bikin error RPC (field tidak ada / model tidak accessible dari
+        API key ini), kabari pesan errornya biar disesuaikan.
+
+        Sengaja TIDAK expand item_ids di sini (cuma list id) -- detail baris
+        harga per pricelist diambil terpisah lewat get_pricelist_items().
+        """
+        conditions = []
+        if ids:
+            conditions.append(("id", "in", ids))
+        if name:
+            conditions.append(("name", "ilike", name))
+        domain = [conditions] if conditions else [[]]
+
+        kwargs = {
+            "fields": ["id", "name", "currency_id", "company_id", "active", "item_ids"],
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("product.pricelist", "search_read", domain, kwargs)
+
+    def get_pricelist_items(self, pricelist_id: int | None = None, limit: int | None = None):
+        """
+        GET mentah product.pricelist.item (baris aturan harga per produk/
+        kategori dalam 1 Pricelist) -- dipakai GET /odoo/pricelist-item.
+        Pelengkap get_pricelists(): header dulu (nama pricelist), baru
+        drill-down ke item lewat pricelist_id (dari field item_ids di
+        get_pricelists()).
+
+        BELUM DIVALIDASI -- field dipilih dari model standar Odoo
+        (`product.pricelist.item`): applied_on menentukan scope baris (produk
+        spesifik/varian/kategori/semua produk), compute_price menentukan cara
+        hitung harga (fixed/percentage/formula), fixed_price dipakai kalau
+        compute_price="fixed". Sama seperti get_pricelists(), kabari kalau ada
+        error RPC field-not-found -- field yang salah tinggal diganti di sini.
+        """
+        conditions = [("pricelist_id", "=", pricelist_id)] if pricelist_id else []
+        domain = [conditions] if conditions else [[]]
+
+        kwargs = {
+            "fields": [
+                "id", "pricelist_id", "applied_on", "product_tmpl_id", "product_id",
+                "categ_id", "compute_price", "fixed_price", "percent_price",
+                "price_discount", "price_surcharge", "min_quantity",
+                "date_start", "date_end",
+            ],
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("product.pricelist.item", "search_read", domain, kwargs)
+
     @staticmethod
     def _name_in_domain(names: list):
         """Bangun domain OR: name ilike names[0] OR name ilike names[1] OR ..."""

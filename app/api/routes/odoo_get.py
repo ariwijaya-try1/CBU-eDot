@@ -160,3 +160,39 @@ def get_odoo_salesperson_by_customer(
     if not result:
         raise NotFoundError(f"res.partner id {customer_id} tidak ditemukan di Odoo")
     return result
+
+
+@router.get("/odoo/pricelist")
+def get_odoo_pricelist(
+    limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    ids: str | None = Query(default=None, description="OPSIONAL -- filter product.pricelist id, comma-separated (mis. 3,5)."),
+    name: str | None = Query(default=None, description="OPSIONAL -- filter name ilike."),
+):
+    """
+    GET mentah product.pricelist (header Pricelist) dari Odoo 19 -- LANGKAH
+    AWAL riset entity Pricelist eSuite (POST /pricelists, BELUM pernah
+    di-push, lihat sales_entities_gap.md). `item_ids` di response cuma list
+    id -- drill-down detail baris harga lewat GET /odoo/pricelist-item.
+
+    BELUM DIVALIDASI ke live Odoo CBU -- field dipilih dari model standar
+    Odoo Sales (product.pricelist), lihat odoo_client.py::get_pricelists()
+    untuk detail. Kalau muncul error RPC (field/model tidak ada/tidak
+    accessible), kabari pesan errornya biar disesuaikan.
+    """
+    return odoo.get_pricelists(limit=limit, ids=_parse_ids(ids), name=name)
+
+
+@router.get("/odoo/pricelist-item")
+def get_odoo_pricelist_item(
+    pricelist_id: int | None = Query(default=None, description="OPSIONAL -- filter baris harga milik 1 pricelist_id tertentu (lihat GET /odoo/pricelist)."),
+    limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+):
+    """
+    GET mentah product.pricelist.item (baris aturan harga per produk/
+    kategori dalam 1 Pricelist) dari Odoo 19. Kosongkan pricelist_id untuk
+    lihat semua baris (semua pricelist tercampur) -- isi pricelist_id (dari
+    GET /odoo/pricelist) untuk drill-down 1 pricelist tertentu.
+
+    BELUM DIVALIDASI -- lihat odoo_client.py::get_pricelist_items().
+    """
+    return odoo.get_pricelist_items(pricelist_id=pricelist_id, limit=limit)
