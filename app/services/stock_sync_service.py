@@ -1,3 +1,5 @@
+import math
+
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import AppError, ValidationError
@@ -126,10 +128,19 @@ class StockSyncService:
         # kepake). 1 pemanggilan get_stock_by_warehouse() per warehouse
         # (context Odoo cuma bisa di-scope ke 1 warehouse per call).
         rows_by_warehouse = {}
+        found_ids = set()
         total_matched = 0
         for wh in warehouses:
             stock_rows = self.odoo.get_stock_by_warehouse(wh["id"], product_ids=verified_ids)
             total_matched += len(stock_rows)
+            # found_ids -- WAJIB dicatat dari stock_rows FULL (SEBELUM limit
+            # dipotong di bawah). FIX 17 Agustus 2026: versi lama menghitung
+            # found_ids SETELAH slice "limit", jadi produk yang sebenarnya
+            # ADA di Odoo tapi kepotong "limit" (diagnostic param) salah
+            # dilaporkan sebagai skipped_not_found_in_odoo -- padahal cuma
+            # sengaja tidak ikut dikirim, bukan "tidak ketemu". Bug ini sudah
+            # disetujui user (15 Agustus) buat dibenerin bareng Bug #1.
+            found_ids.update(row["id"] for row in stock_rows)
             # limit -- diagnostic aid (pola sama dengan product/customer sync),
             # diterapkan PER WAREHOUSE supaya tetap ada baris buat tiap
             # warehouse walau limit kecil (bukan limit gabungan semua warehouse).
@@ -147,7 +158,6 @@ class StockSyncService:
         # tapi TERNYATA tidak ketemu di query stok Odoo langkah 2 (misal produk
         # sudah di-archive/keluar domain Saleable di Odoo setelah variant-nya
         # sempat di-push). Kasus jarang, tapi dicatat buat visibility -- bukan error.
-        found_ids = {row["id"] for wh in warehouses for row in rows_by_warehouse[wh["id"]]}
         skipped_not_found_in_odoo = sorted(
             f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}" for pid in set(verified_ids) - found_ids
         )
@@ -346,13 +356,34 @@ class StockSyncService:
         return ids
 
     def _to_esuite_payload(self, stock_row: dict, warehouse: dict) -> dict:
-        # qty_available di sini = FREE TO USE (bukan raw on-hand lagi --
-        # REVISI 17 Agustus 2026, lihat docstring kelas & OdooClient.
-        # get_stock_by_warehouse()). Dikirim apa adanya (termasuk 0 atau
-        # negatif kalau ada kasus oversold/backorder) -- tidak
-        # di-floor/dibulatkan, minimal invasive sampai ada bukti nyata perlu
-        # penanganan khusus. (Bug #1 int64 vs float masih pending terpisah.)
-        qty = stock_row["qty_available"]
+        # qty_available di sini = FREE TO USE (REVISI 17 Agustus 2026, lihat
+        # docstring kelas & OdooClient.get_stock_by_warehouse()).
+        #
+        # FIX Bug #1 (17 Agustus 2026, KEPUTUSAN user: floor/round down):
+        # di-floor lalu di-cast ke int SEBELUM dikirim. Root cause asli
+        # ternyata bukan cuma soal produk UoM kg yang pecahan -- dibuktikan
+        # test nyata produk UoM Units (ODOO-PROD-18374, stok fisik bulat 7)
+        # TETAP gagal dengan error yang SAMA ("cannot unmarshal number 7.0").
+        # Penyebabnya: qty_available dari Python selalu bertipe float (hasil
+        # SUM() stock.quant), dan float bulat pun (7.0) di-serialize JSON
+        # sebagai "7.0" -- Go net/json MENOLAK MENTAH format desimal apapun
+        # kalau target field bertipe int64, walau nilainya sebenarnya bulat.
+        # Jadi WAJIB cast ke int Python (bukan cuma soal kapan ada pecahan).
+        #
+        # Kenapa floor (bukan round-nearest): PALING AMAN secara bisnis --
+        # angka yang dikirim TIDAK PERNAH lebih besar dari stok fisik asli,
+        # jadi tidak mungkin sales menjanjikan stok yang sebenarnya tidak
+        # cukup (oversell). math.floor() dipakai (bukan int() langsung)
+        # supaya benar juga untuk qty negatif (kasus oversold/backorder,
+        # jarang tapi mungkin) -- math.floor(-2.3) = -3 (tetap "ke bawah"),
+        # sedangkan int(-2.3) = -2 (truncate ke arah 0, salah arah).
+        #
+        # Ini keputusan INTERIM sama seperti free-to-use di atas -- kalau
+        # user cek ke GET /odoo/stock-quant-raw dan selisihnya jadi masalah
+        # nyata (mis. produk kg dengan pecahan besar), bisa direvisi ke
+        # kebijakan lain (round-nearest, atau tanya vendor apa eSuite ada
+        # mekanisme resmi kirim stok desimal -- belum pernah ditanya).
+        qty = math.floor(stock_row["qty_available"])
 
         return {
             "product_variant": {
