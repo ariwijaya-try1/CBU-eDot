@@ -185,14 +185,59 @@ def get_odoo_pricelist(
 @router.get("/odoo/pricelist-item")
 def get_odoo_pricelist_item(
     pricelist_id: int | None = Query(default=None, description="OPSIONAL -- filter baris harga milik 1 pricelist_id tertentu (lihat GET /odoo/pricelist)."),
+    product_id: int | None = Query(default=None, description="OPSIONAL -- filter baris harga milik 1 product.product id tertentu (setara tab 'Prices' di form produk Odoo -- lihat semua pricelist yang punya harga utk produk ini)."),
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
 ):
     """
     GET mentah product.pricelist.item (baris aturan harga per produk/
-    kategori dalam 1 Pricelist) dari Odoo 19. Kosongkan pricelist_id untuk
-    lihat semua baris (semua pricelist tercampur) -- isi pricelist_id (dari
-    GET /odoo/pricelist) untuk drill-down 1 pricelist tertentu.
+    kategori dalam 1 Pricelist) dari Odoo 19. Kosongkan pricelist_id/product_id
+    untuk lihat semua baris (semua pricelist tercampur) -- isi pricelist_id
+    (dari GET /odoo/pricelist) untuk drill-down 1 pricelist tertentu, atau isi
+    product_id (dari GET /odoo/product) untuk lihat semua harga 1 produk lintas
+    pricelist (mis. harga produk X di pricelist Tiktok vs pricelist Coco Mart)
+    -- bisa diisi keduanya sekaligus (AND).
 
     BELUM DIVALIDASI -- lihat odoo_client.py::get_pricelist_items().
     """
-    return odoo.get_pricelist_items(pricelist_id=pricelist_id, limit=limit)
+    return odoo.get_pricelist_items(pricelist_id=pricelist_id, product_id=product_id, limit=limit)
+
+
+@router.get("/odoo/stock-fraction")
+def get_odoo_stock_fraction(
+    result_limit: int | None = Query(default=5, ge=1, le=50, description="Batasi jumlah CONTOH produk yang ditampilkan (default 5, maksimal 50)."),
+    scan_limit: int | None = Query(default=MAX_LIMIT, ge=1, le=MAX_LIMIT, description=f"Jumlah produk yang di-scan dari Odoo (default {MAX_LIMIT}, maksimal {MAX_LIMIT}) -- makin besar makin lama tapi makin besar peluang ketemu."),
+):
+    """
+    DIAGNOSTIC-ONLY (17 Agustus 2026) -- BUKAN bagian alur sync manapun,
+    tidak push apapun. Scan product.product (qty_available GLOBAL gabungan
+    semua lokasi -- BEDA dari POST /sync/stock-matrix yang per-warehouse,
+    lihat odoo_client.py::get_stock_by_warehouse()) & filter yang
+    qty_available-nya BUKAN bilangan bulat (mis. produk kg/timbang).
+
+    Dibuat buat kumpulin contoh nyata produk stok pecahan, dipakai user
+    tanya ke admin -- eSuite API /stock-matrix field quantity/on_hand
+    HARUS int64 (dibuktikan ESUITE_RPC_ERROR "cannot unmarshal number 7.0
+    into ... int64" pas test 17 Agustus 2026), jadi kebijakan pembulatan
+    utk produk kg BELUM diputuskan -- lihat stock_sync_progress.md.
+
+    CATATAN: pakai get_products_raw() (SEMUA produk, tanpa filter Saleable/
+    list_price seperti proses sync) supaya cakupan scan lebih luas -- kalau
+    "scanned" < total produk Odoo & "fractional_found" = 0, naikkan
+    scan_limit atau produk kg-nya mungkin ada di luar 500 produk pertama.
+    """
+    products = odoo.get_products_raw(limit=scan_limit)
+    fractional = [
+        {
+            "product_id": p["id"],
+            "name": p["name"],
+            "uom": p.get("uom_id"),
+            "qty_available": p["qty_available"],
+        }
+        for p in products
+        if p["qty_available"] != int(p["qty_available"])
+    ]
+    return {
+        "scanned": len(products),
+        "fractional_found": len(fractional),
+        "results": fractional[:result_limit],
+    }

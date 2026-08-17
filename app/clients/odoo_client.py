@@ -423,22 +423,41 @@ class OdooClient:
 
         return self._execute("product.pricelist", "search_read", domain, kwargs)
 
-    def get_pricelist_items(self, pricelist_id: int | None = None, limit: int | None = None):
+    def get_pricelist_items(
+        self,
+        pricelist_id: int | None = None,
+        product_id: int | None = None,
+        limit: int | None = None,
+    ):
         """
         GET mentah product.pricelist.item (baris aturan harga per produk/
         kategori dalam 1 Pricelist) -- dipakai GET /odoo/pricelist-item.
         Pelengkap get_pricelists(): header dulu (nama pricelist), baru
         drill-down ke item lewat pricelist_id (dari field item_ids di
-        get_pricelists()).
+        get_pricelists()) ATAU lewat product_id (17 Agustus 2026, ditambahkan
+        setelah user tunjukkan tab "Prices" di form produk Odoo -- 1 produk
+        bisa muncul di BANYAK pricelist sekaligus dengan fixed_price beda-beda
+        per toko/customer/channel, jadi query per-produk juga relevan, bukan
+        cuma per-pricelist).
 
         BELUM DIVALIDASI -- field dipilih dari model standar Odoo
         (`product.pricelist.item`): applied_on menentukan scope baris (produk
         spesifik/varian/kategori/semua produk), compute_price menentukan cara
         hitung harga (fixed/percentage/formula), fixed_price dipakai kalau
-        compute_price="fixed". Sama seperti get_pricelists(), kabari kalau ada
-        error RPC field-not-found -- field yang salah tinggal diganti di sini.
+        compute_price="fixed". product_id difilter ke field `product_id`
+        (product.product -- konsisten dengan konvensi project ini yang selalu
+        pakai product.product sebagai "variant", BUKAN product_tmpl_id) --
+        ASUMSI, kalau tab "Prices" Odoo ternyata pakai product_tmpl_id bukan
+        product_id, filter ini perlu disesuaikan (kabari hasilnya kalau
+        product_id=<id valid> tapi hasilnya selalu kosong).
+        Sama seperti get_pricelists(), kabari kalau ada error RPC
+        field-not-found -- field yang salah tinggal diganti di sini.
         """
-        conditions = [("pricelist_id", "=", pricelist_id)] if pricelist_id else []
+        conditions = []
+        if pricelist_id:
+            conditions.append(("pricelist_id", "=", pricelist_id))
+        if product_id:
+            conditions.append(("product_id", "=", product_id))
         domain = [conditions] if conditions else [[]]
 
         kwargs = {
