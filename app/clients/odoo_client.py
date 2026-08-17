@@ -133,50 +133,73 @@ class OdooClient:
         Sumber data stok PER WAREHOUSE untuk entity Stock Matrix di eSuite,
         dipakai stock_sync_service.py (lihat stock_sync_progress.md).
 
-        BEDA dari get_products(): field 'qty_available'/'free_qty' di
-        product.product itu GLOBAL (semua lokasi digabung) KECUALI dikasih
-        context 'warehouse' -- Odoo native support ini lewat compute
-        context, jadi TIDAK perlu baca stock.quant manual/group-by sendiri.
+        REVISI 17 Agustus 2026 (fix Bug #2, MENGGANTIKAN pendekatan lama) --
+        versi SEBELUMNYA pakai computed field 'qty_available' dari
+        product.product + context {"warehouse": warehouse_id} (asumsi Odoo
+        native compute context cukup, TIDAK perlu baca stock.quant manual).
+        TERBUKTI SALAH lewat test end-to-end 17 Agustus: context 'warehouse'
+        TIDAK dihormati Odoo 19 instance ini -- hasilnya SELALU gabungan
+        SEMUA warehouse (dicek: hasil dengan & tanpa context identik).
+        Pembuktian: produk id 9169 balikin qty_available=16.72, padahal
+        fisik CBU cuma 9.00 (cocok Odoo UI) + Sunshine Food 7.72 (cocok
+        Odoo UI) = 16.72 persis -- CONFIRMED double-count lintas company.
+        Ini jugalah risiko ICT (Inter-Company Transfer) yang sudah diflag
+        14 Agustus 2026 ("kalau hasil stock-matrix tidak sesuai, ICT
+        kandidat pertama buat dicek") -- sekarang terbukti nyata.
 
-        UPDATE 15 Agustus 2026 (skema resmi vendor + keputusan bisnis baru,
-        lihat stock_sync_progress.md): field eSuite "on_hand" (dikirim ke
-        /stock-matrix -- TIDAK ADA field "free_to_use" sebagai input, itu
-        computed otomatis di GET) diisi dari 'qty_available' (stok fisik/
-        on-hand asli) -- BUKAN 'free_qty' seperti draft awal. 'free_qty'
-        tetap diambil di sini (siapa tahu dibutuhkan lagi nanti), tapi
-        TIDAK dipakai stock_sync_service.py.
+        SEKARANG: baca stock.quant MENTAH (bukan computed field), filter
+        location_id.warehouse_id = warehouse_id + location_id.usage =
+        "internal" (lokasi fisik nyata, exclude lokasi virtual/transit/
+        partner), lalu jumlahkan quantity per produk manual di Python.
+        Pola ini sudah diverifikasi akurat 100% (match persis ke Odoo UI
+        per company, lihat stock_sync_progress.md).
+
+        CATATAN behavior beda dari versi lama (dicatat sebagai referensi,
+        BUKAN bug): produk yang TIDAK PERNAH punya baris stock.quant sama
+        sekali di warehouse ini (belum pernah ada pergerakan stok) TIDAK
+        AKAN MUNCUL di hasil (versi lama tetap muncul dengan qty_available:
+        0). Efeknya di stock_sync_service.py: produk begitu masuk ke
+        skipped_not_found_in_odoo, bukan dipush dengan quantity 0. Kalau
+        nanti ada laporan "produk X nggak pernah ke-sync stoknya", ini
+        kandidat pertama buat dicek (kemungkinan besar genuinely belum
+        ada stok, bukan bug -- verifikasi via GET /odoo/stock-quant-raw).
+
+        UPDATE 15 Agustus 2026 (skema resmi vendor, masih berlaku): field
+        eSuite "on_hand" diisi dari 'qty_available' (stok fisik/on-hand
+        asli) -- BUKAN 'free_qty'. 'free_qty' di return dict ini SEKARANG
+        diisi SAMA dengan qty_available (reserved_quantity TIDAK dikurangi
+        -- 'free_qty' asli TIDAK dipakai stock_sync_service.py sama sekali,
+        jadi tidak overengineering menghitung reserved secara terpisah).
 
         Domain Saleable sengaja SAMA dengan get_products() -- cuma produk
         yang disync ke eSuite yang perlu stok-nya disync juga.
 
-        CATATAN/BELUM TUNTAS (14 Agustus 2026, dari info admin inventory):
-        Odoo 19 CBU pakai ICT (Inter-Company Transfer) -- stok bisa
-        berpindah ANTAR company. Versi pertama ini TETAP pakai warehouse_id
-        sebagai kunci utama (bukan company_id), asumsi 1 warehouse = 1
-        company pemilik fisik barang saat ini -- BELUM divalidasi penuh
-        terhadap skenario ICT (stok transit/in-transit antar company).
-        Kalau nanti hasil stock-matrix kelihatan tidak sesuai (stok ICT
-        ke-double count atau hilang), ini kandidat pertama buat dicek.
-        Keputusan (user, 14 Agustus 2026): jalan per-warehouse dulu sambil
-        lihat perkembangan, bukan didesain ulang sekarang tanpa bukti masalah.
-
-        product_ids (OPSIONAL): filter tambahan "id in product_ids", pola
-        sama dengan get_products() -- kosongkan untuk semua produk Saleable.
+        product_ids (OPSIONAL): filter tambahan "product_id in product_ids",
+        pola sama dengan get_products() -- kosongkan untuk semua produk
+        Saleable.
         """
-        conditions = [("categ_id.complete_name", "ilike", "ALL / SALEABLE")]
+        conditions = [
+            ("location_id.warehouse_id", "=", warehouse_id),
+            ("location_id.usage", "=", "internal"),
+            ("product_id.categ_id.complete_name", "ilike", "ALL / SALEABLE"),
+        ]
         if product_ids:
-            conditions.append(("id", "in", product_ids))
+            conditions.append(("product_id", "in", product_ids))
         domain = [conditions]
 
-        return self._execute(
-            "product.product",
+        quants = self._execute(
+            "stock.quant",
             "search_read",
             domain,
-            {
-                "fields": ["id", "qty_available", "free_qty"],
-                "context": {"warehouse": warehouse_id},
-            },
+            {"fields": ["product_id", "quantity"]},
         )
+
+        totals = {}
+        for q in quants:
+            pid = q["product_id"][0]
+            totals[pid] = totals.get(pid, 0) + q["quantity"]
+
+        return [{"id": pid, "qty_available": qty, "free_qty": qty} for pid, qty in totals.items()]
 
     def get_stock_quants(self, product_id: int):
         """
