@@ -33,6 +33,16 @@ def sync_product(
             "ODOO-PROD-18374,ODOO-PROD-8857). Kosongkan untuk semua produk."
         ),
     ),
+    product_id: int | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL (17 Agustus 2026) -- shortcut upsert 1 produk aja "
+            "pakai Odoo product id langsung (mis. product_id=9169), tanpa "
+            "perlu tau format external_code. Efeknya sama persis dengan "
+            "external_codes=ODOO-PROD-9169. Kalau external_codes JUGA "
+            "diisi, external_codes yang dipakai dan product_id diabaikan."
+        ),
+    ),
     with_variant: bool = Query(
         default=True,
         description=(
@@ -63,12 +73,19 @@ def sync_product(
     Trigger manual sync Product: Odoo (product.product, category Saleable & list_price>0) -> eSuite.
     Produk dengan free_qty=0 tetap disync (revisi 5 Agustus 2026 -- tidak lagi jadi syarat exclude).
     Butuh Product Category sudah ke-push duluan (POST /sync/product-category).
+
+    Upsert 1 produk spesifik: pakai product_id=<id> (shortcut) ATAU
+    external_codes=ODOO-PROD-<id> -- keduanya sama, cuma produk itu yang
+    diupsert (bukan semua produk).
     """
+    resolved_external_codes = external_codes or (
+        f"ODOO-PROD-{product_id}" if product_id is not None else None
+    )
     return service.sync(
         event=event,
         limit=limit,
         batch_size=batch_size,
-        external_codes=external_codes,
+        external_codes=resolved_external_codes,
         with_variant=with_variant,
         include_payload=include_payload,
     )
