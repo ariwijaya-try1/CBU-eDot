@@ -217,12 +217,18 @@ class OdooClient:
         produk ini apa adanya, biar kelihatan lokasi mana aja yang
         nyumbang stok & apakah ada lokasi "asing" (company lain / lokasi
         transit ICT) yang mestinya tidak masuk hitungan warehouse CBU.
+
+        REVISI 17 Agustus 2026: field "product_id" ditambah ke fields --
+        Odoo search_read otomatis balikin [id, display_name] utk field
+        many2one, jadi nama produk ikut tampil di tiap baris (user nggak
+        perlu buka Odoo lagi cuma buat tahu "product_id sekian itu produk
+        apa"). Tidak perlu RPC call tambahan.
         """
         quants = self._execute(
             "stock.quant",
             "search_read",
             [[("product_id", "=", product_id)]],
-            {"fields": ["id", "location_id", "company_id", "quantity", "reserved_quantity", "lot_id", "in_date"]},
+            {"fields": ["id", "product_id", "location_id", "company_id", "quantity", "reserved_quantity", "lot_id", "in_date"]},
         )
 
         location_ids = list({q["location_id"][0] for q in quants if q.get("location_id")})
