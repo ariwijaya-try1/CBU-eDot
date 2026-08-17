@@ -44,10 +44,21 @@ class StockSyncService:
       khusus stock-matrix (1 baris diidentifikasi otomatis oleh eSuite lewat
       composite key: company + product_variant + uom + warehouse + location
       + batch).
-    - "on_hand" & "quantity" (nilai sama) diisi dari qty_available Odoo
-      (stok fisik/on-hand asli) -- BUKAN free_qty. Keputusan bisnis baru,
-      dikonfirmasi user 15 Agustus 2026 (sumber: tim inventory/Komang),
-      membatalkan keputusan lama "kirim free-to-use saja".
+    - "on_hand" & "quantity" (nilai sama) diisi dari qty_available yang
+      dikembalikan OdooClient.get_stock_by_warehouse(). REVISI 17 Agustus
+      2026 (KEPUTUSAN INTERIM, menggantikan keputusan 15 Agustus di bawah):
+      nilai ini sekarang FREE TO USE (on-hand dikurangi reserved_quantity,
+      dikurangi stok dari lot yang sudah expired/dijadwalkan destroy) --
+      BUKAN raw on-hand lagi. Alasan: raw on-hand ikut menghitung stok
+      expired yang mau di-destroy, jadi sales bisa lihat stok yang
+      sebenarnya sudah tidak bisa dijual. Ini keputusan INTERIM -- belum
+      termasuk "forecasted" (dari PO/production yang dijadwalkan datang),
+      itu keputusan bisnis terpisah yang masih pending. Lihat
+      stock_sync_progress.md bagian "KEPUTUSAN BISNIS: Free to Use vs
+      On-Hand vs Forecasted" untuk detail lengkap & alasan.
+      [Keputusan 15 Agustus 2026 yang digantikan: "on_hand"/"quantity" diisi
+      raw on-hand (qty_available asli, BUKAN free_qty), dikonfirmasi user
+      sumber tim inventory/Komang -- sudah tidak berlaku per revisi di atas.]
     - TIDAK kirim uom.id / free_to_use / location -- bukan field input yang
       valid (vendor konfirmasi 15 Agustus 2026); free_to_use & location
       muncul otomatis di GET (computed/auto-derived dari warehouse).
@@ -335,11 +346,12 @@ class StockSyncService:
         return ids
 
     def _to_esuite_payload(self, stock_row: dict, warehouse: dict) -> dict:
-        # qty_available = stok fisik/on-hand asli (KEPUTUSAN 15 Agustus 2026,
-        # lihat docstring kelas -- BUKAN free_qty). Dikirim apa adanya
-        # (termasuk 0 atau negatif kalau ada kasus oversold/backorder) --
-        # tidak di-floor/dibulatkan, minimal invasive sampai ada bukti nyata
-        # perlu penanganan khusus.
+        # qty_available di sini = FREE TO USE (bukan raw on-hand lagi --
+        # REVISI 17 Agustus 2026, lihat docstring kelas & OdooClient.
+        # get_stock_by_warehouse()). Dikirim apa adanya (termasuk 0 atau
+        # negatif kalau ada kasus oversold/backorder) -- tidak
+        # di-floor/dibulatkan, minimal invasive sampai ada bukti nyata perlu
+        # penanganan khusus. (Bug #1 int64 vs float masih pending terpisah.)
         qty = stock_row["qty_available"]
 
         return {

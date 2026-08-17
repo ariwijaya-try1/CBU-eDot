@@ -1,3 +1,5 @@
+from datetime import date
+
 import requests
 from app.core.config import settings
 from app.core.exceptions import OdooConnectionError, OdooRPCError, OdooTimeoutError
@@ -164,12 +166,39 @@ class OdooClient:
         kandidat pertama buat dicek (kemungkinan besar genuinely belum
         ada stok, bukan bug -- verifikasi via GET /odoo/stock-quant-raw).
 
-        UPDATE 15 Agustus 2026 (skema resmi vendor, masih berlaku): field
-        eSuite "on_hand" diisi dari 'qty_available' (stok fisik/on-hand
-        asli) -- BUKAN 'free_qty'. 'free_qty' di return dict ini SEKARANG
-        diisi SAMA dengan qty_available (reserved_quantity TIDAK dikurangi
-        -- 'free_qty' asli TIDAK dipakai stock_sync_service.py sama sekali,
-        jadi tidak overengineering menghitung reserved secara terpisah).
+        REVISI 17 Agustus 2026 (KEPUTUSAN BISNIS BARU, INTERIM -- lihat
+        stock_sync_progress.md utk alasan lengkap & histori): field yang
+        disync SEKARANG adalah FREE TO USE quantity, BUKAN raw on-hand.
+
+        Alasan: user cek Odoo UI (Forecasted Report), "Quantity On Hand"
+        mentah (dulu dipakai versi sebelumnya) ternyata masih menghitung
+        "Expired Stock" -- stok yang SUDAH lewat tanggal removal & tinggal
+        nunggu di-destroy, TIDAK BENERAN BISA DIJUAL. Contoh nyata: produk
+        9169 "PAULS Butter", CBU on-hand = 9.00 (0.72 expired + 8.28
+        beneran available/"Free Stock" di Odoo UI). Kalau kita push 9.00
+        mentah, sales bisa nawarin 0.72 unit yang sebenarnya sudah rusak/
+        kadaluarsa -- resiko bisnis nyata.
+
+        Formula "free to use" yang dipakai di sini:
+          SUM(quantity) - SUM(reserved_quantity) - SUM(quantity milik lot
+          yang removal_date-nya SUDAH LEWAT hari ini, dianggap "Expired
+          Stock, to remove now" persis kayak kategori di Odoo UI)
+
+        INI KEPUTUSAN INTERIM, BUKAN final -- SENGAJA TIDAK termasuk stok
+        "Forecasted" (dari PO/production yang dijadwalkan datang tapi
+        belum fisik ada). Secara bisnis sales idealnya bisa lihat 2 angka
+        terpisah (stok yang beneran ada sekarang vs proyeksi ke depan),
+        tapi itu perlu keputusan/desain terpisah (mis. field tambahan di
+        eSuite) -- BELUM dibahas/diputuskan. Untuk sekarang: minimal sales
+        dapat angka yang BENERAN bisa dijual hari ini, bukan angka yang
+        ikut ke-inflate stok expired.
+
+        ASUMSI (belum divalidasi 100%): field 'removal_date' di model
+        'stock.lot' -- field standar Odoo (product_expiry addon) yang
+        drive kategori "to remove now" vs "to remove on <tanggal>" di
+        Forecasted Report. Kalau field ini ternyata tidak ada/beda nama
+        di instance ini, RPC bakal langsung error jelas (nama field
+        salah), gampang disesuaikan.
 
         Domain Saleable sengaja SAMA dengan get_products() -- cuma produk
         yang disync ke eSuite yang perlu stok-nya disync juga.
@@ -191,13 +220,34 @@ class OdooClient:
             "stock.quant",
             "search_read",
             domain,
-            {"fields": ["product_id", "quantity"]},
+            {"fields": ["product_id", "quantity", "reserved_quantity", "lot_id"]},
         )
+
+        # Resolve removal_date per lot -- buat exclude stok yang sudah
+        # "Expired Stock, to remove now" dari total free-to-use.
+        lot_ids = list({q["lot_id"][0] for q in quants if q.get("lot_id")})
+        removal_dates = {}
+        if lot_ids:
+            lots = self._execute(
+                "stock.lot",
+                "search_read",
+                [[("id", "in", lot_ids)]],
+                {"fields": ["id", "removal_date"]},
+            )
+            removal_dates = {lot["id"]: lot["removal_date"] for lot in lots}
+
+        today_str = date.today().isoformat()
 
         totals = {}
         for q in quants:
+            lot = q.get("lot_id")
+            removal_date = removal_dates.get(lot[0]) if lot else None
+            if removal_date and removal_date <= today_str:
+                continue  # expired, dijadwalkan destroy -- exclude dari free-to-use
+
             pid = q["product_id"][0]
-            totals[pid] = totals.get(pid, 0) + q["quantity"]
+            free_qty = q["quantity"] - (q.get("reserved_quantity") or 0)
+            totals[pid] = totals.get(pid, 0) + free_qty
 
         return [{"id": pid, "qty_available": qty, "free_qty": qty} for pid, qty in totals.items()]
 
