@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 from app.clients.odoo_client import OdooClient
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.scope import IN_SCOPE_COMPANY_NAMES
 
 router = APIRouter()
 odoo = OdooClient()
@@ -204,40 +205,59 @@ def get_odoo_pricelist_item(
 
 @router.get("/odoo/stock-fraction")
 def get_odoo_stock_fraction(
-    result_limit: int | None = Query(default=5, ge=1, le=50, description="Batasi jumlah CONTOH produk yang ditampilkan (default 5, maksimal 50)."),
-    scan_limit: int | None = Query(default=MAX_LIMIT, ge=1, le=MAX_LIMIT, description=f"Jumlah produk yang di-scan dari Odoo (default {MAX_LIMIT}, maksimal {MAX_LIMIT}) -- makin besar makin lama tapi makin besar peluang ketemu."),
+    result_limit: int | None = Query(default=5, ge=1, le=50, description="Batasi jumlah CONTOH yang ditampilkan (default 5, maksimal 50)."),
 ):
     """
     DIAGNOSTIC-ONLY (17 Agustus 2026) -- BUKAN bagian alur sync manapun,
-    tidak push apapun. Scan product.product (qty_available GLOBAL gabungan
-    semua lokasi -- BEDA dari POST /sync/stock-matrix yang per-warehouse,
-    lihat odoo_client.py::get_stock_by_warehouse()) & filter yang
-    qty_available-nya BUKAN bilangan bulat (mis. produk kg/timbang).
+    tidak push apapun. Cari produk yang qty_available-nya BUKAN bilangan
+    bulat (mis. produk kg/timbang), dipakai kumpulin contoh nyata sebelum
+    putuskan kebijakan pembulatan quantity di POST /sync/stock-matrix
+    (eSuite API field quantity/on_hand HARUS int64 -- lihat
+    stock_sync_progress.md).
 
-    Dibuat buat kumpulin contoh nyata produk stok pecahan, dipakai user
-    tanya ke admin -- eSuite API /stock-matrix field quantity/on_hand
-    HARUS int64 (dibuktikan ESUITE_RPC_ERROR "cannot unmarshal number 7.0
-    into ... int64" pas test 17 Agustus 2026), jadi kebijakan pembulatan
-    utk produk kg BELUM diputuskan -- lihat stock_sync_progress.md.
-
-    CATATAN: pakai get_products_raw() (SEMUA produk, tanpa filter Saleable/
-    list_price seperti proses sync) supaya cakupan scan lebih luas -- kalau
-    "scanned" < total produk Odoo & "fractional_found" = 0, naikkan
-    scan_limit atau produk kg-nya mungkin ada di luar 500 produk pertama.
+    REVISI 17 Agustus 2026 (bug ditemukan user): versi PERTAMA endpoint ini
+    pakai get_products_raw() -- qty_available TANPA context warehouse/
+    company, jadi ke-aggregate lintas SEMUA company yang bisa diakses API
+    user (termasuk 2 company DI LUAR scope, lihat app/core/scope.py) --
+    hasilnya MELESET JAUH dari Odoo UI (contoh nyata: produk id 9169
+    "PAULS Butter Unsalted 25kg" tampil 16.72 di endpoint lama, padahal UI
+    Odoo nunjukin 9.000 Units). SEKARANG dipakai pola SAMA PERSIS dengan
+    stock_sync_service.py (yang beneran dipush ke eSuite): resolve company
+    in-scope -> warehouse -> get_stock_by_warehouse() PER WAREHOUSE (pakai
+    context 'warehouse' Odoo, sudah terbukti akurat & konsisten dipakai
+    proses sync beneran) -- supaya contoh yang ditemukan di sini match
+    dengan apa yang ACTUALLY bakal dipush ke eSuite, bukan angka gado-gado
+    lintas company.
     """
-    products = odoo.get_products_raw(limit=scan_limit)
-    fractional = [
-        {
-            "product_id": p["id"],
-            "name": p["name"],
-            "uom": p.get("uom_id"),
-            "qty_available": p["qty_available"],
-        }
-        for p in products
-        if p["qty_available"] != int(p["qty_available"])
-    ]
+    companies = odoo.get_companies(IN_SCOPE_COMPANY_NAMES)
+    warehouses = odoo.get_warehouses([c["id"] for c in companies])
+
+    fractional = []
+    for wh in warehouses:
+        if len(fractional) >= result_limit:
+            break
+        for row in odoo.get_stock_by_warehouse(wh["id"]):
+            qty = row["qty_available"]
+            # toleransi kecil (1e-6) -- hindari false positive dari noise
+            # pembulatan float, bukan produk yang genuinely fractional.
+            if abs(qty - round(qty)) > 1e-6:
+                fractional.append({
+                    "product_id": row["id"],
+                    "warehouse_id": wh["id"],
+                    "warehouse_name": wh["name"],
+                    "qty_available": qty,
+                })
+
+    results = fractional[:result_limit]
+    # lookup nama produk biar gampang dibaca -- pakai get_products_raw()
+    # CUMA buat resolve id -> name, BUKAN sumber angka qty (lihat revisi di atas).
+    product_ids = list({r["product_id"] for r in results})
+    names = {p["id"]: p["name"] for p in odoo.get_products_raw(ids=product_ids)} if product_ids else {}
+    for r in results:
+        r["name"] = names.get(r["product_id"])
+
     return {
-        "scanned": len(products),
+        "warehouses_scanned": [w["name"] for w in warehouses],
         "fractional_found": len(fractional),
-        "results": fractional[:result_limit],
+        "results": results,
     }
