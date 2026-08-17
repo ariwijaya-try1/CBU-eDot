@@ -178,6 +178,47 @@ class OdooClient:
             },
         )
 
+    def get_stock_quants(self, product_id: int):
+        """
+        DIAGNOSTIC-ONLY (17 Agustus 2026) -- baca stock.quant MENTAH per
+        produk, TERMASUK detail lokasi (complete_name/usage/warehouse_id/
+        company_id per baris) -- BUKAN computed qty_available seperti
+        get_stock_by_warehouse(). Dibuat buat investigasi dugaan ICT
+        (Inter-Company Transfer) bikin context {"warehouse": id} di
+        get_stock_by_warehouse() ke-leak lintas company (lihat
+        stock_sync_progress.md -- bukti: qty_available warehouse CBU =
+        16.72, padahal fisik CBU cuma 9.00 & Sunshine Food Free Stock
+        7.72 -- 9.00 + 7.72 = 16.72 persis, indikasi kuat ke-double-count).
+
+        Tidak pakai context apapun (sengaja) -- baca SEMUA baris quant
+        produk ini apa adanya, biar kelihatan lokasi mana aja yang
+        nyumbang stok & apakah ada lokasi "asing" (company lain / lokasi
+        transit ICT) yang mestinya tidak masuk hitungan warehouse CBU.
+        """
+        quants = self._execute(
+            "stock.quant",
+            "search_read",
+            [[("product_id", "=", product_id)]],
+            {"fields": ["id", "location_id", "company_id", "quantity", "reserved_quantity", "lot_id", "in_date"]},
+        )
+
+        location_ids = list({q["location_id"][0] for q in quants if q.get("location_id")})
+        locations = {}
+        if location_ids:
+            loc_records = self._execute(
+                "stock.location",
+                "search_read",
+                [[("id", "in", location_ids)]],
+                {"fields": ["id", "complete_name", "usage", "warehouse_id", "company_id"]},
+            )
+            locations = {loc["id"]: loc for loc in loc_records}
+
+        for q in quants:
+            loc_id = q["location_id"][0] if q.get("location_id") else None
+            q["location_detail"] = locations.get(loc_id)
+
+        return quants
+
     def get_categories_by_ids(self, ids: list):
         """
         Ambil name asli (leaf name, bukan complete_name) untuk sekumpulan

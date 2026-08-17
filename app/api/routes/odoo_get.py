@@ -261,3 +261,24 @@ def get_odoo_stock_fraction(
         "fractional_found": len(fractional),
         "results": results,
     }
+
+
+@router.get("/odoo/stock-quant-raw")
+def get_odoo_stock_quant_raw(
+    product_id: int = Query(..., description="id product.product -- lihat GET /odoo/product."),
+):
+    """
+    DIAGNOSTIC-ONLY (17 Agustus 2026) -- baca stock.quant MENTAH (bukan
+    computed qty_available) buat 1 produk, TERMASUK detail lokasi
+    (complete_name/usage/warehouse_id/company_id per baris quant).
+
+    Dibuat buat investigasi dugaan ICT (Inter-Company Transfer) bikin
+    context {"warehouse": id} di get_stock_by_warehouse() ke-leak lintas
+    company -- lihat stock_sync_progress.md utk bukti awal (qty_available
+    warehouse CBU = 16.72, padahal fisik CBU 9.00 + Sunshine Food Free
+    Stock 7.72 = 16.72 persis). Bandingkan `location_detail.warehouse_id`
+    tiap baris di sini -- kalau ada baris yang warehouse_id-nya BUKAN
+    warehouse CBU tapi tetap ikut kehitung di get_stock_by_warehouse(1),
+    itu bukti langsung sumber leak-nya.
+    """
+    return odoo.get_stock_quants(product_id=product_id)
