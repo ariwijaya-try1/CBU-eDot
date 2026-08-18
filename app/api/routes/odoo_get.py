@@ -263,6 +263,25 @@ def get_odoo_stock_fraction(
     }
 
 
+@router.get("/odoo/stock-location")
+def get_odoo_stock_location(
+    usage: str | None = Query(default="internal", description="OPSIONAL -- filter stock.location.usage (internal/supplier/customer/inventory/transit/view/production). Kosongkan utk semua usage."),
+):
+    """
+    DIAGNOSTIC-ONLY (18 Agustus 2026) -- list SEMUA stock.location Odoo
+    (bukan cuma yang nyangkut ke 1 produk seperti GET /odoo/stock-quant-raw).
+
+    Dibuat buat verifikasi konfirmasi bisnis (lihat stock_sync_progress.md):
+    filter location di get_stock_by_warehouse() sekarang cuma usage=
+    "internal" -- lagi dibahas apakah perlu ditambah syarat complete_name
+    mengandung "Stock". Karena complete_name itu human input, cek dulu ke
+    SEMUA baris usage="internal" yang ASLI ADA di Odoo -- kalau ada yang
+    contains_stock=false, itu KANDIDAT typo/pengecualian yang perlu
+    diputuskan manual sebelum filter tambahan diterapkan.
+    """
+    return odoo.get_stock_locations(usage=usage)
+
+
 @router.get("/odoo/stock-quant-raw")
 def get_odoo_stock_quant_raw(
     product_id: int = Query(..., description="id product.product -- lihat GET /odoo/product."),

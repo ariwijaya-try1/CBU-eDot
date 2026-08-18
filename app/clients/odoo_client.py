@@ -298,6 +298,39 @@ class OdooClient:
 
         return quants
 
+    def get_stock_locations(self, usage: str | None = "internal"):
+        """
+        DIAGNOSTIC-ONLY (18 Agustus 2026) -- baca SEMUA stock.location Odoo
+        (bukan cuma yang nyangkut ke 1 produk seperti get_stock_quants()).
+
+        Dibuat buat verifikasi konfirmasi bisnis (lihat stock_sync_progress.md):
+        apakah location usage="internal" SELALU punya complete_name yang
+        mengandung "Stock" -- karena nama location itu human input (bukan
+        field terkontrol/enum), berisiko ada pengecualian/typo. Jangan cuma
+        asumsi dari beberapa contoh -- endpoint ini biar bisa dicek ke data
+        ASLI, semua baris sekaligus.
+
+        Field 'contains_stock' ditambahkan per baris (dihitung di Python,
+        BUKAN dari Odoo) -- True kalau substring "stock" ada di
+        complete_name (case-insensitive). Biar baris yang FALSE (kandidat
+        exception/typo) langsung kelihatan tanpa scan manual satu-satu.
+
+        usage: filter stock.location.usage standar Odoo (internal/supplier/
+        customer/inventory/transit/view/production). Default "internal",
+        sama dengan yang dipakai get_stock_by_warehouse(). Kosongkan (None)
+        untuk lihat SEMUA location apapun usage-nya.
+        """
+        domain = [[("usage", "=", usage)]] if usage else [[]]
+        locations = self._execute(
+            "stock.location",
+            "search_read",
+            domain,
+            {"fields": ["id", "complete_name", "usage", "warehouse_id", "company_id", "active"]},
+        )
+        for loc in locations:
+            loc["contains_stock"] = "stock" in (loc.get("complete_name") or "").lower()
+        return locations
+
     def get_categories_by_ids(self, ids: list):
         """
         Ambil name asli (leaf name, bukan complete_name) untuk sekumpulan
