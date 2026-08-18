@@ -670,6 +670,48 @@ class OdooClient:
 
         return self._execute("product.pricelist.item", "search_read", domain, kwargs)
 
+    def get_product_ids_by_template_ids(self, template_ids: list[int]):
+        """
+        Resolve product.template id -> product.product id(s) -- dipakai
+        pricelist_sync_service.py (FIX 18 Agustus 2026, live test end-to-end
+        pertama: SEMUA product.pricelist.item Odoo CBU ternyata pakai
+        applied_on="1_product" -- product_tmpl_id TERISI, product_id KOSONG/
+        false. Bukti live: GET /odoo/pricelist-item?pricelist_id=2293 ->
+        {"product_id": false, "product_tmpl_id": [17854, "..."], ...}.
+        Asumsi awal (filter cuma ke product_id) SALAH -- itu penyebab
+        POST /sync/pricelist balikin 0 hasil di 316/316 pricelist (semua
+        item ke-skip di tahap grouping, sebelum sempat cek eSuite).
+
+        Karena bisnis CBU dikonfirmasi 1 template = 1 product.product (tidak
+        ada variant fisik terpisah -- tiap ukuran/kemasan = product.product
+        id sendiri, lihat get_products() & CONFIG_NOTES.md), SEHARUSNYA 1
+        template cuma balik 1 product.product id -- tapi method ini TETAP
+        mengembalikan LIST (bukan single id) supaya caller bisa deteksi
+        anomali (template dengan >1 product.product, atau 0 kalau produknya
+        sudah di luar domain/di-archive) tanpa exception tersembunyi.
+
+        TIDAK difilter Saleable/list_price di sini (beda dari get_products())
+        -- pricelist bisa saja punya rule utk produk yang sudah tidak
+        Saleable, caller (pricelist_sync_service.py) yang putuskan treat-nya.
+
+        Return: {template_id: [product_product_id, ...]}
+        """
+        if not template_ids:
+            return {}
+
+        records = self._execute(
+            "product.product",
+            "search_read",
+            [[("product_tmpl_id", "in", template_ids)]],
+            {"fields": ["id", "product_tmpl_id"]},
+        )
+
+        result = {}
+        for r in records:
+            tmpl_id = r["product_tmpl_id"][0]
+            result.setdefault(tmpl_id, []).append(r["id"])
+        return result
+
     @staticmethod
     def _name_in_domain(names: list):
         """Bangun domain OR: name ilike names[0] OR name ilike names[1] OR ..."""

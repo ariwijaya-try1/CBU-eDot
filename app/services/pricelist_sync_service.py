@@ -41,6 +41,15 @@ class PricelistSyncService:
       Makanya service ini SENGAJA TIDAK filter company_id sama sekali (beda
       dari branch/warehouse/stock yang selalu filter IN_SCOPE_COMPANY_NAMES).
 
+    FIX 18 Agustus 2026 (setelah live test pertama balikin 0/316 pricelist):
+    item Odoo CBU ternyata SELALU pakai applied_on="1_product" (product_tmpl_id
+    terisi, product_id KOSONG/false) -- bukan applied_on="0_product_variant"
+    seperti asumsi awal. Sekarang resolve product_tmpl_id -> product.product
+    id dulu (lihat _resolve_products() & OdooClient.get_product_ids_by_template_ids())
+    sebelum lanjut ke resolve eSuite. Confirmed live: GET /odoo/pricelist-item
+    ?pricelist_id=2293 -> {"product_id": false, "product_tmpl_id": [17854, ...],
+    "compute_price": "fixed", "fixed_price": 9009}.
+
     KEPUTUSAN DESAIN (lihat pricelist_progress.md utk analisa lengkap):
     - `customer_group[]` SENGAJA TIDAK dikirim di v1 ini. Kesimpulan riset
       17 Agustus: assignment harga per-toko yang SEBENARNYA jalan lewat
@@ -122,8 +131,17 @@ class PricelistSyncService:
         pricelist_ids = [pl["id"] for pl in pricelists]
         items = self.odoo.get_pricelist_items(pricelist_ids=pricelist_ids)
 
-        items_by_pricelist, skipped_no_product, skipped_unsupported_compute = (
-            self._group_items(items)
+        grouped_raw, skipped_no_product, skipped_unsupported_compute = self._group_items(items)
+
+        # FIX 18 Agustus 2026 (live test pertama: 316/316 pricelist balik 0
+        # hasil) -- item Odoo CBU ternyata SELALU pakai applied_on="1_product"
+        # (product_tmpl_id terisi, product_id KOSONG/false), BUKAN
+        # applied_on="0_product_variant" seperti asumsi awal. Resolve
+        # product_tmpl_id -> product.product id DULU (1 RPC bulk call)
+        # sebelum lanjut ke resolve eSuite -- lihat
+        # OdooClient.get_product_ids_by_template_ids() & _resolve_products().
+        items_by_pricelist, skipped_ambiguous_template, skipped_template_no_product = (
+            self._resolve_products(grouped_raw)
         )
 
         # Resolve id eSuite produk -- 1x FULL PULL GET /product (pola sama
@@ -133,6 +151,15 @@ class PricelistSyncService:
             row["product_id"] for rows in items_by_pricelist.values() for row in rows
         }
         esuite_products = self._pull_esuite_product_map(needed_product_ids)
+
+        # DIAGNOSTIC (18 Agustus 2026, ditambahkan setelah test pricelist_id=2293
+        # balik "0 valid product" -- supaya ketahuan LANGSUNG dari response produk
+        # mana yang belum punya variant valid di eSuite, tanpa perlu debug manual
+        # bolak-balik GET /odoo/product vs GET /product). Sorted supaya output stabil.
+        products_not_in_esuite = sorted(
+            f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}"
+            for pid in needed_product_ids - esuite_products.keys()
+        )
 
         # Resolve id eSuite branch per company -- himpunan KECIL (cuma
         # sejumlah company unik yang muncul di pricelist terpilih), pakai
@@ -187,11 +214,15 @@ class PricelistSyncService:
         if not payload:
             raise ValidationError(
                 "Tidak ada pricelist dengan produk yang sudah punya product-variant valid di eSuite -- "
-                "push Product dulu (POST /sync/product dengan with_variant=True), atau sync stock-matrix "
-                "supaya lebih banyak produk ter-verifikasi",
+                "push Product dulu (POST /sync/product dengan with_variant=True) untuk produk yang "
+                "dilist di 'products_not_in_esuite_sample', atau sync stock-matrix supaya lebih banyak "
+                "produk ter-verifikasi",
                 details={
                     "total_pricelist_diproses": len(pricelists),
                     "skipped_pricelist_no_valid_product_count": len(skipped_pricelist_no_valid_product),
+                    "products_needed_count": len(needed_product_ids),
+                    "products_not_in_esuite_count": len(products_not_in_esuite),
+                    "products_not_in_esuite_sample": products_not_in_esuite[:20],
                 },
             )
 
@@ -237,8 +268,12 @@ class PricelistSyncService:
             "total_pricelist_diproses": len(pricelists),
             "total_sent": len(payload),
             "skipped_pricelist_no_valid_product": skipped_pricelist_no_valid_product,
-            "skipped_item_no_product_id": skipped_no_product,
+            "skipped_item_no_product_ref": skipped_no_product,
             "skipped_item_unsupported_compute_price": skipped_unsupported_compute,
+            "skipped_item_ambiguous_template": skipped_ambiguous_template,
+            "skipped_item_template_no_product": skipped_template_no_product,
+            "products_not_in_esuite_count": len(products_not_in_esuite),
+            "products_not_in_esuite_sample": products_not_in_esuite[:20],
             "branch_unresolved": branch_unresolved,
             "batch_size": size,
             "batch_count": len(batches),
@@ -260,25 +295,39 @@ class PricelistSyncService:
     def _group_items(self, items: list) -> tuple[dict, int, int]:
         """
         Kelompokkan product.pricelist.item per pricelist_id, HANYA baris
-        yang punya product_id (applied_on = produk spesifik -- konsisten
-        dengan model bisnis terkonfirmasi "harga per produk per toko", lihat
-        docstring kelas) DAN compute_price="fixed" (lihat _compute_item_price()).
+        yang punya product_id ATAU product_tmpl_id (applied_on = produk
+        spesifik -- konsisten dengan model bisnis terkonfirmasi "harga per
+        produk per toko", lihat docstring kelas; kategori/semua produk di
+        luar scope v1 ini) DAN compute_price="fixed" (lihat
+        _compute_item_price()).
 
-        Return: (items_by_pricelist, skipped_no_product, skipped_unsupported_compute)
-        - items_by_pricelist: {pricelist_id: [{"product_id": int, "price": float}, ...]}
+        REVISI 18 Agustus 2026 (FIX bug live: 316/316 pricelist balik 0
+        hasil) -- SEBELUMNYA cuma baca `product_id`, TERNYATA item Odoo CBU
+        selalu pakai applied_on="1_product" (`product_tmpl_id` terisi,
+        `product_id` KOSONG/false, dikonfirmasi live GET /odoo/pricelist-item
+        pricelist_id=2293). Sekarang tangkap KEDUANYA -- resolve
+        product_tmpl_id -> product.product id dilakukan TERPISAH di
+        _resolve_products() (butuh 1 RPC bulk call, tidak dilakukan di sini
+        supaya fungsi ini tetap murni baca Odoo, tidak query lagi di tengah loop).
+
+        Return: (grouped_raw, skipped_no_product, skipped_unsupported_compute)
+        - grouped_raw: {pricelist_id: [{"product_id": int|None, "product_tmpl_id": int|None, "price": float}, ...]}
+          (salah satu dari product_id/product_tmpl_id pasti terisi, tidak
+          pernah dua-duanya None -- sudah difilter di bawah)
         - skipped_no_product: jumlah baris di-skip krn tidak ada product_id
-          (applied_on kategori/semua produk -- di luar scope v1 ini)
+          MAUPUN product_tmpl_id (applied_on kategori/semua produk)
         - skipped_unsupported_compute: jumlah baris di-skip krn compute_price
           bukan "fixed" (percentage/formula, belum didukung)
         """
-        items_by_pricelist: dict = {}
+        grouped_raw: dict = {}
         skipped_no_product = 0
         skipped_unsupported_compute = 0
 
         for item in items:
             pl_ref = item.get("pricelist_id")
             product_ref = item.get("product_id")
-            if not pl_ref or not product_ref:
+            tmpl_ref = item.get("product_tmpl_id")
+            if not pl_ref or (not product_ref and not tmpl_ref):
                 skipped_no_product += 1
                 continue
 
@@ -287,11 +336,70 @@ class PricelistSyncService:
                 skipped_unsupported_compute += 1
                 continue
 
-            items_by_pricelist.setdefault(pl_ref[0], []).append(
-                {"product_id": product_ref[0], "price": price}
+            grouped_raw.setdefault(pl_ref[0], []).append(
+                {
+                    "product_id": product_ref[0] if product_ref else None,
+                    "product_tmpl_id": tmpl_ref[0] if tmpl_ref else None,
+                    "price": price,
+                }
             )
 
-        return items_by_pricelist, skipped_no_product, skipped_unsupported_compute
+        return grouped_raw, skipped_no_product, skipped_unsupported_compute
+
+    def _resolve_products(self, grouped_raw: dict) -> tuple[dict, int, int]:
+        """
+        Resolve baris yang masih pakai product_tmpl_id (applied_on=
+        "1_product") jadi product.product id -- lihat
+        OdooClient.get_product_ids_by_template_ids() untuk alasan lengkap.
+        Baris yang sudah punya product_id langsung (applied_on=
+        "0_product_variant", kalau ada) dilewati apa adanya, tidak perlu resolve.
+
+        1 RPC bulk call TOTAL (bukan per pricelist/per item) -- kumpulin
+        SEMUA template_id yang dibutuhkan dulu, baru query sekali.
+
+        Return: (items_by_pricelist, skipped_ambiguous_template, skipped_template_no_product)
+        - items_by_pricelist: {pricelist_id: [{"product_id": int, "price": float}, ...]}
+          -- SEMUA baris di sini sudah pasti punya product_id valid.
+        - skipped_ambiguous_template: baris di-skip krn 1 product_tmpl_id
+          ternyata resolve ke LEBIH DARI 1 product.product id (anomali --
+          bisnis CBU dikonfirmasi 1 template = 1 product.product, tapi
+          dicek eksplisit di sini daripada asumsi buta & salah pilih salah
+          satu produk secara diam-diam).
+        - skipped_template_no_product: baris di-skip krn product_tmpl_id
+          tidak resolve ke product.product manapun (mis. sudah di-archive).
+        """
+        template_ids_needed = {
+            row["product_tmpl_id"]
+            for rows in grouped_raw.values()
+            for row in rows
+            if row["product_tmpl_id"] and not row["product_id"]
+        }
+        template_map = self.odoo.get_product_ids_by_template_ids(list(template_ids_needed))
+
+        items_by_pricelist: dict = {}
+        skipped_ambiguous_template = 0
+        skipped_template_no_product = 0
+
+        for pl_id, rows in grouped_raw.items():
+            resolved_rows = []
+            for row in rows:
+                pid = row["product_id"]
+                if not pid:
+                    candidates = template_map.get(row["product_tmpl_id"], [])
+                    if len(candidates) == 1:
+                        pid = candidates[0]
+                    elif len(candidates) == 0:
+                        skipped_template_no_product += 1
+                        continue
+                    else:
+                        skipped_ambiguous_template += 1
+                        continue
+                resolved_rows.append({"product_id": pid, "price": row["price"]})
+
+            if resolved_rows:
+                items_by_pricelist[pl_id] = resolved_rows
+
+        return items_by_pricelist, skipped_ambiguous_template, skipped_template_no_product
 
     @staticmethod
     def _compute_item_price(item: dict) -> float | None:
