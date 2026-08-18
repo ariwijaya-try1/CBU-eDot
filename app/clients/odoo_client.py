@@ -610,6 +610,7 @@ class OdooClient:
     def get_pricelist_items(
         self,
         pricelist_id: int | None = None,
+        pricelist_ids: list[int] | None = None,
         product_id: int | None = None,
         limit: int | None = None,
     ):
@@ -636,9 +637,21 @@ class OdooClient:
         product_id=<id valid> tapi hasilnya selalu kosong).
         Sama seperti get_pricelists(), kabari kalau ada error RPC
         field-not-found -- field yang salah tinggal diganti di sini.
+
+        REVISI 18 Agustus 2026 -- parameter `pricelist_ids` (list, JAMAK)
+        DITAMBAHKAN, dipakai pricelist_sync_service.py buat ambil SEMUA item
+        lintas BANYAK pricelist sekaligus (1 RPC call, domain "pricelist_id
+        in [...]") -- bukan 1 RPC call terpisah per pricelist (~100+
+        pricelist = ~100+ round-trip kalau dipanggil satu-satu, mahal).
+        `pricelist_id` (tunggal, existing, dipakai GET /odoo/pricelist-item
+        drill-down 1 pricelist) TETAP DIPERTAHANKAN APA ADANYA -- tidak ada
+        breaking change ke behavior lama. Kalau KEDUANYA diisi, `pricelist_ids`
+        yang menang (lebih spesifik/bulk).
         """
         conditions = []
-        if pricelist_id:
+        if pricelist_ids:
+            conditions.append(("pricelist_id", "in", pricelist_ids))
+        elif pricelist_id:
             conditions.append(("pricelist_id", "=", pricelist_id))
         if product_id:
             conditions.append(("product_id", "=", product_id))

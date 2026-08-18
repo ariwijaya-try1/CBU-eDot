@@ -8,6 +8,7 @@ from app.api.routes.product import router as product_router
 from app.api.routes.customer import router as customer_router
 from app.api.routes.customer_group import router as customer_group_router
 from app.api.routes.stock_matrix import router as stock_matrix_router
+from app.api.routes.pricelist import router as pricelist_router
 from app.api.routes.odoo_get import router as odoo_get_router
 from app.api.routes.debug import router as debug_router
 from app.core.config import settings
@@ -54,6 +55,7 @@ app.include_router(product_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_group_router, prefix="/api", tags=["Sync"])
 app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])
+app.include_router(pricelist_router, prefix="/api", tags=["Sync"])
 app.include_router(odoo_get_router, prefix="/api", tags=["odoo - Get"])
 app.include_router(debug_router, prefix="/api", tags=["Debug"])
 
