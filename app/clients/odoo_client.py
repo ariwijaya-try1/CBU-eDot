@@ -736,3 +736,25 @@ class OdooClient:
             },
         )
         return records[0] if records else None
+
+    def get_sales_teams(self):
+        """
+        Sumber data untuk entity Salesman Division di eSuite.
+        Model: crm.team (Sales Team) -- DIKONFIRMASI 18 Agustus 2026 lewat
+        cek langsung UI Odoo: representasi WILAYAH/TERRITORY (mis. "BALI FS
+        AREA 1", "JKT MT"), BUKAN representasi 1 karyawan (anggota tiap
+        team cuma kode slot/rute, lihat sales_entities_gap.md). Ambil SEMUA
+        team active=True apa adanya, termasuk yang non-territory
+        ("Sales"/"OFFICE"/"ONLINE") -- tidak ada exclude, dikonfirmasi user.
+        TIDAK difilter company_id -- Sales Team Odoo CBU kelihatan
+        "Visible to all" (tidak selalu terikat 1 company tertentu), beda
+        dari Branch/Warehouse yang memang representasi company itu sendiri.
+        """
+        domain = [[("active", "=", True)]]
+
+        return self._execute(
+            "crm.team",
+            "search_read",
+            domain,
+            {"fields": ["id", "name"]},
+        )
