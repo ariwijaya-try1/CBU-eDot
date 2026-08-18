@@ -483,27 +483,56 @@ class PricelistSyncService:
     def _resolve_branches(self, company_ids: set) -> dict:
         """
         Resolve id eSuite Branch per company_id Odoo -- himpunan kecil (cuma
-        sejumlah company unik yang muncul di pricelist terpilih, biasanya
-        <=3), pakai find_by_external_codes() early-exit (BEDA dari resolve
-        produk di atas yang sengaja full-pull -- di sini himpunannya memang
-        kecil & besar kemungkinan ketemu semua, jadi early-exit worth it).
+        sejumlah company unik yang muncul di pricelist terpilih, biasanya <=3).
 
-        CATATAN: sama seperti produk, field "id" top-level dokumen /branches
-        BELUM PERNAH dipakai/divalidasi di kode manapun sebelumnya (Branch
-        selama ini cuma di-push, tidak pernah di-resolve balik oleh service
-        lain). Kalau company (mis. "Sunshine Agri Pratama") tidak ketemu di
-        eSuite sama sekali (belum pernah dipush krn di luar
-        IN_SCOPE_COMPANY_NAMES, lihat docstring kelas), code-nya otomatis
-        tidak ada di dict hasil -- caller (sync()) treat sebagai
-        branch_unresolved, BUKAN error fatal.
+        FIX 18 Agustus 2026 (live test: pricelist company CBU, yang PASTI
+        sudah punya Branch di eSuite, tetap selalu masuk branch_unresolved) --
+        root cause dikonfirmasi via `GET /debug/pull/branches`: `external_code`
+        Branch itu **NESTED** di `basic_info.external_code`, BUKAN top-level
+        seperti Product/Customer/Product-Category. `find_by_external_codes()`
+        generik (EsuiteClient, dipakai banyak entity lain) cuma cek
+        `record.get("external_code")` di level atas -- utk Branch ini SELALU
+        None, jadi resolve SELALU gagal walau datanya ada & benar. Ini bukan
+        soal company belum ke-push (dugaan awal), murni salah lokasi baca
+        field. TIDAK mengubah `find_by_external_codes()` generik-nya (itu
+        sudah terbukti benar untuk entity lain yang external_code-nya
+        top-level) -- di sini pakai pull loop manual yang baca posisi nested
+        Branch secara spesifik.
+
+        Himpunan Branch kecil (7 record total saat dicek live) -- full-pull
+        semua halaman aman & simpel, tidak perlu logic early-exit.
+
+        CATATAN: field "id" top-level dokumen /branches SUDAH dikonfirmasi
+        reliable (terisi persis, tidak kosong) dari live check di atas.
+
+        Kalau company (mis. "Sunshine Agri Pratama") tidak ketemu di eSuite
+        sama sekali (belum pernah dipush krn di luar IN_SCOPE_COMPANY_NAMES,
+        lihat docstring kelas), code-nya otomatis tidak ada di dict hasil --
+        caller (sync()) treat sebagai branch_unresolved, BUKAN error fatal.
 
         Return: {external_code: esuite_branch_id}
         """
         if not company_ids:
             return {}
-        codes = {f"{COMPANY_EXTERNAL_CODE_PREFIX}{cid}" for cid in company_ids}
-        resolved = self.esuite.find_by_external_codes("branches", codes)
-        return {code: record["id"] for code, record in resolved.items() if record.get("id")}
+        codes_wanted = {f"{COMPANY_EXTERNAL_CODE_PREFIX}{cid}" for cid in company_ids}
+
+        result: dict = {}
+        page = 1
+        limit = 200
+        while True:
+            pulled = self.esuite.pull("branches", page=page, limit=limit)
+            for record in pulled.get("data") or []:
+                code = (record.get("basic_info") or {}).get("external_code")
+                if code in codes_wanted and record.get("id") and code not in result:
+                    result[code] = record["id"]
+
+            meta = pulled.get("meta") or {}
+            total_page = meta.get("total_page", 1)
+            if page >= total_page or len(result) == len(codes_wanted):
+                break
+            page += 1
+
+        return result
 
     @staticmethod
     def _parse_ids(ids: str) -> list:
