@@ -9,3 +9,5 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-17T11:39:29.320096+00:00,stock-matrix,upsert,1,1,0,1,success,,
 2026-08-17T11:39:39.129337+00:00,stock-matrix,upsert,1,1,0,1,success,,
 2026-08-18T02:29:17.499932+00:00,stock-matrix,upsert,1,1,0,1,success,,
+2026-08-18T05:14:58.983985+00:00,product,upsert,1,1,0,1,success,,
+2026-08-18T05:15:26.033467+00:00,pricelist,upsert,,1,0,1,success,,1 pricelist push tanpa branch (company belum ada di eSuite)
