@@ -152,9 +152,14 @@ class OdooClient:
         SEKARANG: baca stock.quant MENTAH (bukan computed field), filter
         location_id.warehouse_id = warehouse_id + location_id.usage =
         "internal" (lokasi fisik nyata, exclude lokasi virtual/transit/
-        partner), lalu jumlahkan quantity per produk manual di Python.
-        Pola ini sudah diverifikasi akurat 100% (match persis ke Odoo UI
-        per company, lihat stock_sync_progress.md).
+        partner) + location_id.complete_name mengandung "/Stock/" (lihat
+        REVISI 18 Agustus di bawah -- exclude location staging/proses
+        internal seperti Output/Pre-Production/Post-Production yang tetap
+        usage="internal" tapi BUKAN zone stok fisik), lalu jumlahkan
+        quantity per produk manual di Python. Pola warehouse+usage sudah
+        diverifikasi akurat 100% match Odoo UI (lihat stock_sync_progress.md)
+        -- filter "/Stock/" ditambahkan belakangan, BELUM diverifikasi ulang
+        ke Odoo UI dengan filter baru ini (next step user).
 
         CATATAN behavior beda dari versi lama (dicatat sebagai referensi,
         BUKAN bug): produk yang TIDAK PERNAH punya baris stock.quant sama
@@ -206,10 +211,36 @@ class OdooClient:
         product_ids (OPSIONAL): filter tambahan "product_id in product_ids",
         pola sama dengan get_products() -- kosongkan untuk semua produk
         Saleable.
+
+        REVISI 18 Agustus 2026 (KEPUTUSAN BISNIS BARU, ditemukan via GET
+        /odoo/stock-location) -- filter `usage="internal"` SAJA TERNYATA
+        TIDAK CUKUP. 1 warehouse Odoo punya BEBERAPA location usage=
+        "internal" selain zone stok fisik, misalnya `CBU/Output`,
+        `CBU/Pre-Production`, `CBU/Post-Production` -- semua itu location
+        staging/proses internal, BUKAN representasi stok yang beneran bisa
+        dijual, tapi tetap usage="internal" jadi ikut ke-hitung SEBELUM fix
+        ini. Konfirmasi higher-up: location valid = pola
+        "<KodeCompany>/Stock/<Zone>" (mis. CBU/Stock/AC, SFC/Stock/Frozen,
+        SAP/Stock/Dry -- AC/Chiller/Dry/Frozen = marker zone type/suhu).
+
+        Filter tambahan: `location_id.complete_name ilike "/Stock/"` --
+        dipilih SUBSTRING match "/Stock/" (dengan slash di kedua sisi),
+        BUKAN daftar hardcode nama zone (AC/Chiller/Dry/Frozen) supaya:
+        (1) otomatis meng-exclude location PARENT "<Company>/Stock" itu
+        sendiri (tidak ada "/" setelah "Stock" di complete_name-nya, cuma
+        cocok kalau ada child location di bawahnya, mis. ".../Stock/AC"),
+        (2) tetap ikut kalau suatu saat ada zone type baru selain 4 yang
+        sudah ada sekarang (tidak perlu update kode lagi tiap ada zone
+        baru). CATATAN: pola ini otomatis IKUT-kan "SAP/Stock/Supply"
+        (zone ke-13, bukan cuma 4 zone AC/Chiller/Dry/Frozen yang dikasih
+        contoh) dan otomatis EXCLUDE "SUPL/Stock" (warehouse "Supplies",
+        company CBU -- tidak punya child zone) -- BELUM eksplisit
+        dikonfirmasi user, di-flag terpisah di stock_sync_progress.md.
         """
         conditions = [
             ("location_id.warehouse_id", "=", warehouse_id),
             ("location_id.usage", "=", "internal"),
+            ("location_id.complete_name", "ilike", "/Stock/"),
             ("product_id.categ_id.complete_name", "ilike", "ALL / SALEABLE"),
         ]
         if product_ids:
