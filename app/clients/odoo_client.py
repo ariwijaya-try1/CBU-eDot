@@ -45,13 +45,21 @@ class OdooClient:
         except requests.RequestException as e:
             raise OdooConnectionError(details={"raw": str(e)})
 
-    def get_companies(self, names: list):
+    def get_companies(self, names: list, ids: list | None = None):
         """
         Sumber data untuk entity Branch di eSuite.
         Match pakai ilike per nama (bukan exact 'in') supaya nggak gampang
         meleset gara-gara format string (koma, spasi, dst).
+
+        ids (OPSIONAL, 21 Agustus 2026): filter tambahan "id in ids" (res.company
+        id) -- dipakai buat upsert Branch tertentu saja lewat external_code,
+        pola sama get_customers()/get_products(). Kosongkan untuk behavior
+        normal (semua company in-scope).
         """
-        domain = [self._name_in_domain(names)]
+        conditions = self._name_in_domain(names)
+        if ids:
+            conditions = conditions + [("id", "in", ids)]
+        domain = [conditions]
 
         return self._execute(
             "res.company",
@@ -60,13 +68,20 @@ class OdooClient:
             {"fields": ["id", "name", "partner_id"]},
         )
 
-    def get_warehouses(self, company_ids: list):
+    def get_warehouses(self, company_ids: list, ids: list | None = None):
         """
         Sumber data untuk entity Warehouse di eSuite.
         WAJIB difilter company_ids -- tanpa ini kebawa semua warehouse dari
         4 badan usaha, padahal cuma 2 yang in-scope.
+
+        ids (OPSIONAL, 21 Agustus 2026): filter tambahan "id in ids"
+        (stock.warehouse id) -- dipakai buat upsert Warehouse tertentu saja
+        lewat external_code. Kosongkan untuk behavior normal.
         """
-        domain = [[("company_id", "in", company_ids), ("active", "=", True)]]
+        conditions = [("company_id", "in", company_ids), ("active", "=", True)]
+        if ids:
+            conditions.append(("id", "in", ids))
+        domain = [conditions]
 
         return self._execute(
             "stock.warehouse",
@@ -75,14 +90,21 @@ class OdooClient:
             {"fields": ["id", "name", "code", "company_id"]},
         )
 
-    def get_product_categories(self):
+    def get_product_categories(self, ids: list | None = None):
         """
         Sumber data untuk entity Product Category di eSuite.
         Difilter cuma kategori di bawah "Saleable" -- sesuai aturan bisnis:
         produk yang boleh dijual/disync itu produk dengan category SALEABLE.
         Tidak difilter active -- model ini tidak punya field 'active' di Odoo 19.
+
+        ids (OPSIONAL, 21 Agustus 2026): filter tambahan "id in ids"
+        (product.category id) -- dipakai buat upsert kategori tertentu saja
+        lewat external_code. Kosongkan untuk behavior normal.
         """
-        domain = [[("complete_name", "ilike", "saleable")]]
+        conditions = [("complete_name", "ilike", "saleable")]
+        if ids:
+            conditions.append(("id", "in", ids))
+        domain = [conditions]
 
         return self._execute(
             "product.category",
@@ -403,11 +425,20 @@ class OdooClient:
         dipakai buat upsert customer tertentu saja lewat external_code
         (lihat customer_sync_service.py). Kosongkan untuk behavior normal.
 
-        phone/mobile/email (21 Agustus 2026): ditambahkan setelah live test
+        phone/email (21 Agustus 2026): ditambahkan setelah live test
         `POST /sync/customers` konfirmasi field ini benar-benar tersimpan &
         tampil di GET eSuite (beda dari currency yang masih pending -- lihat
         CONFIG_NOTES.md). Field standar res.partner, sama nama-nya dengan
         yang sudah dipakai di get_contacts().
+
+        ⚠️ "mobile" SENGAJA TIDAK diikutkan (dihapus lagi 21 Agustus 2026,
+        beberapa jam setelah ditambahkan) -- Odoo 19 instance CBU error
+        "Invalid field 'mobile'" pas query res.partner. Field ini memang
+        sudah dihapus resmi dari Contacts di Odoo 19 (di-merge ke `phone`,
+        dikonfirmasi user), BUKAN field standar lagi di versi ini walau
+        masih ada di Odoo versi lama/dokumentasi umum. Jangan tambahkan
+        balik tanpa cek dulu apakah field ini benar-benar ada di instance
+        Odoo yang dipakai.
         """
         conditions = [("customer_rank", ">", 0), ("active", "=", True)]
         if ids:
@@ -418,7 +449,7 @@ class OdooClient:
             "res.partner",
             "search_read",
             domain,
-            {"fields": ["id", "name", "company_type", "phone", "mobile", "email"]},
+            {"fields": ["id", "name", "company_type", "phone", "email"]},
         )
 
     # ------------------------------------------------------------------
@@ -743,7 +774,7 @@ class OdooClient:
         )
         return records[0] if records else None
 
-    def get_sales_teams(self):
+    def get_sales_teams(self, ids: list | None = None):
         """
         Sumber data untuk entity Salesman Division di eSuite.
         Model: crm.team (Sales Team) -- DIKONFIRMASI 18 Agustus 2026 lewat
@@ -755,8 +786,15 @@ class OdooClient:
         TIDAK difilter company_id -- Sales Team Odoo CBU kelihatan
         "Visible to all" (tidak selalu terikat 1 company tertentu), beda
         dari Branch/Warehouse yang memang representasi company itu sendiri.
+
+        ids (OPSIONAL, 21 Agustus 2026): filter tambahan "id in ids"
+        (crm.team id) -- dipakai buat upsert division tertentu saja lewat
+        external_code. Kosongkan untuk behavior normal.
         """
-        domain = [[("active", "=", True)]]
+        conditions = [("active", "=", True)]
+        if ids:
+            conditions.append(("id", "in", ids))
+        domain = [conditions]
 
         return self._execute(
             "crm.team",

@@ -41,22 +41,62 @@ class SalesmanDivisionSyncService:
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert"):
-        teams = self.odoo.get_sales_teams()
+    def sync(
+        self,
+        event: str = "upsert",
+        external_codes: str | None = None,
+        limit: int | None = None,
+    ):
+        odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
+        teams = self.odoo.get_sales_teams(ids=odoo_ids)
 
         if not teams:
-            raise ValidationError("Tidak ada crm.team (Sales Team) active ditemukan di Odoo")
+            raise ValidationError(
+                "Tidak ada crm.team (Sales Team) active ditemukan di Odoo (cek juga external_codes kalau diisi)"
+            )
+
+        total_matched = len(teams)
+
+        # limit -- diagnostic aid, pola sama service lain (kirim cuma N
+        # division pertama). Default None -> behavior normal (semua division).
+        if limit is not None:
+            teams = teams[:limit]
 
         payload = [self._to_esuite_payload(t) for t in teams]
         esuite_result = self.esuite.push("salesman-division", event=event, data=payload)
 
         return {
-            "total_matched_in_odoo": len(teams),
+            "total_matched_in_odoo": total_matched,
             "synced_count": len(payload),
             "external_codes": [item["external_code"] for item in payload],
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
+
+    def _parse_external_codes(self, external_codes: str) -> list[int]:
+        """
+        Parse "ODOO-SALESTEAM-1,ODOO-SALESTEAM-2" -> [1, 2] -- pola sama
+        dengan customer_sync_service.py/product_sync_service.py, buat
+        upsert Salesman Division tertentu saja tanpa nyentuh yang lain.
+        """
+        ids = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{id_odoo}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            id_part = code[len(EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                raise ValidationError(
+                    f"external_code '{code}' -- bagian id bukan angka valid",
+                    details={"external_code": code},
+                )
+            ids.append(int(id_part))
+        return ids
 
     def _to_esuite_payload(self, team: dict) -> dict:
         return {

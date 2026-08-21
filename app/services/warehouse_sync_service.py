@@ -3,13 +3,23 @@ from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import ValidationError
 from app.core.scope import IN_SCOPE_COMPANY_NAMES
 
+# Prefix external_code Warehouse -- HARUS sama persis dengan yang dikirim
+# _to_esuite_payload() ("ODOO-WH-{id}"). Dipakai fitur "upsert by
+# external_code" (21 Agustus 2026), pola sama customer_sync_service.py.
+EXTERNAL_CODE_PREFIX = "ODOO-WH-"
+
 
 class WarehouseSyncService:
     def __init__(self):
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert"):
+    def sync(
+        self,
+        event: str = "upsert",
+        external_codes: str | None = None,
+        limit: int | None = None,
+    ):
         companies = self.odoo.get_companies(IN_SCOPE_COMPANY_NAMES)
         if not companies:
             raise ValidationError(
@@ -17,22 +27,61 @@ class WarehouseSyncService:
                 details={"expected_names": IN_SCOPE_COMPANY_NAMES},
             )
 
+        odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
         company_ids = [c["id"] for c in companies]
-        warehouses = self.odoo.get_warehouses(company_ids)
+        warehouses = self.odoo.get_warehouses(company_ids, ids=odoo_ids)
         if not warehouses:
-            raise ValidationError("Tidak ada stock.warehouse aktif untuk badan usaha in-scope")
+            raise ValidationError(
+                "Tidak ada stock.warehouse aktif untuk badan usaha in-scope (cek juga external_codes kalau diisi)"
+            )
 
+        total_matched = len(warehouses)
+
+        # limit -- diagnostic aid, pola sama service lain (kirim cuma N
+        # warehouse pertama). Default None -> behavior normal (semua warehouse).
+        if limit is not None:
+            warehouses = warehouses[:limit]
+
+        # Branch WAJIB sudah di-push duluan supaya bisa di-resolve -- resolve
+        # tetap untuk SEMUA company in-scope (bukan cuma yang kepakai di
+        # warehouse hasil filter), murah karena cuma ~2-3 company.
         branch_id_by_company = self._resolve_branch_ids(companies)
 
         payload = [self._to_esuite_payload(wh, branch_id_by_company) for wh in warehouses]
         esuite_result = self.esuite.push("warehouse", event=event, data=payload)
 
         return {
+            "total_matched_in_odoo": total_matched,
             "synced_count": len(payload),
             "external_codes": [item["external_code"] for item in payload],
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
+
+    def _parse_external_codes(self, external_codes: str) -> list[int]:
+        """
+        Parse "ODOO-WH-1,ODOO-WH-2" -> [1, 2] -- pola sama dengan
+        customer_sync_service.py/product_sync_service.py, buat upsert
+        Warehouse tertentu saja tanpa nyentuh yang lain.
+        """
+        ids = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{id_odoo}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            id_part = code[len(EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                raise ValidationError(
+                    f"external_code '{code}' -- bagian id bukan angka valid",
+                    details={"external_code": code},
+                )
+            ids.append(int(id_part))
+        return ids
 
     def _resolve_branch_ids(self, companies: list) -> dict:
         """

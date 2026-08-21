@@ -33,6 +33,12 @@ CUSTOMER_GROUPS = [
     {"code": "HORECA", "name": "HORECA"},
 ]
 
+# Prefix external_code Customer Group -- HARUS sama persis dengan yang
+# dikirim _to_esuite_payload() ("CBU-CUSTGROUP-{code}"). Dipakai fitur
+# "upsert by external_code" (21 Agustus 2026). BEDA dari entity lain: bukan
+# id Odoo numerik, cuma "code" (FS/MT/GT/HORECA) dari CUSTOMER_GROUPS di atas.
+EXTERNAL_CODE_PREFIX = "CBU-CUSTGROUP-"
+
 # Currency -- sama persis dengan CURRENCY di customer_sync_service.py (IDR,
 # satu-satunya currency di seluruh bisnis). Didefinisikan ulang di sini
 # (bukan import silang antar service) konsisten dengan pola tiap sync service
@@ -57,19 +63,61 @@ class CustomerGroupSyncService:
     def __init__(self):
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert"):
+    def sync(
+        self,
+        event: str = "upsert",
+        external_codes: str | None = None,
+        limit: int | None = None,
+    ):
         if not CUSTOMER_GROUPS:
             raise ValidationError("CUSTOMER_GROUPS kosong -- tidak ada yang bisa disync")
 
-        payload = [self._to_esuite_payload(g) for g in CUSTOMER_GROUPS]
+        groups = CUSTOMER_GROUPS
+        if external_codes:
+            wanted_codes = self._parse_external_codes(external_codes)
+            groups = [g for g in CUSTOMER_GROUPS if g["code"] in wanted_codes]
+            if not groups:
+                raise ValidationError(
+                    "Tidak ada CUSTOMER_GROUPS yang cocok dengan external_codes",
+                    details={"external_codes": external_codes, "known_codes": [g["code"] for g in CUSTOMER_GROUPS]},
+                )
+
+        total_matched = len(groups)
+
+        # limit -- diagnostic aid, pola sama service lain. Kurang berguna di
+        # sini (cuma 4 grup total) tapi ditambahkan buat konsistensi API.
+        if limit is not None:
+            groups = groups[:limit]
+
+        payload = [self._to_esuite_payload(g) for g in groups]
         esuite_result = self.esuite.push("customergroup", event=event, data=payload)
 
         return {
+            "total_matched_in_odoo": total_matched,
             "synced_count": len(payload),
             "external_codes": [item["external_code"] for item in payload],
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
+
+    def _parse_external_codes(self, external_codes: str) -> list[str]:
+        """
+        Parse "CBU-CUSTGROUP-FS,CBU-CUSTGROUP-MT" -> ["FS", "MT"] -- BEDA
+        dari service lain (bukan id Odoo numerik, cuma "code" grup yang
+        hardcoded di CUSTOMER_GROUPS di atas).
+        """
+        codes = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{code}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            codes.append(code[len(EXTERNAL_CODE_PREFIX):])
+        return codes
 
     def _to_esuite_payload(self, group: dict) -> dict:
         return {

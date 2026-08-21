@@ -106,16 +106,29 @@ class PricelistSyncService:
         self,
         event: str = "upsert",
         ids: str | None = None,
+        external_codes: str | None = None,
         limit: int | None = None,
         batch_size: int | None = None,
         include_payload: bool = False,
     ):
-        odoo_ids = self._parse_ids(ids) if ids else None
+        # external_codes (21 Agustus 2026) -- ditambahkan buat konsisten
+        # dengan entity lain (format "ODOO-PRICELIST-{id}"), TAPI param `ids`
+        # lama TETAP ADA & tetap jadi cara utama (lihat alasan di _parse_ids:
+        # dikonfirmasi user supaya bisa langsung pakai id dari GET
+        # /odoo/pricelist tanpa format ulang). Kalau keduanya diisi,
+        # external_codes yang dipakai (pola sama product_id vs external_codes
+        # di /sync/product).
+        if external_codes:
+            odoo_ids = self._parse_external_codes(external_codes)
+        elif ids:
+            odoo_ids = self._parse_ids(ids)
+        else:
+            odoo_ids = None
         pricelists = self.odoo.get_pricelists(ids=odoo_ids)
 
         if not pricelists:
             raise ValidationError(
-                "Tidak ada product.pricelist ditemukan di Odoo (cek juga parameter 'ids' kalau diisi)"
+                "Tidak ada product.pricelist ditemukan di Odoo (cek juga parameter 'ids'/'external_codes' kalau diisi)"
             )
 
         total_matched = len(pricelists)
@@ -550,6 +563,33 @@ class PricelistSyncService:
                 f"Parameter 'ids' harus angka semua (Odoo product.pricelist id), pisah koma -- dapat: '{ids}'",
                 details={"ids": ids},
             )
+
+    @staticmethod
+    def _parse_external_codes(external_codes: str) -> list[int]:
+        """
+        Parse "ODOO-PRICELIST-3,ODOO-PRICELIST-5" -> [3, 5] -- pola sama
+        dengan customer_sync_service.py/product_sync_service.py. Ditambahkan
+        21 Agustus 2026 supaya konsisten dgn entity lain; param 'ids' lama
+        (id Odoo mentah) tetap jadi cara utama, lihat komentar di sync().
+        """
+        ids = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{id_odoo}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            id_part = code[len(EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                raise ValidationError(
+                    f"external_code '{code}' -- bagian id bukan angka valid",
+                    details={"external_code": code},
+                )
+            ids.append(int(id_part))
+        return ids
 
     @staticmethod
     def _to_esuite_payload(pricelist: dict, product_entries: list, branch_entries: list) -> dict:

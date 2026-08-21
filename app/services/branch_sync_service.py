@@ -3,6 +3,11 @@ from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import ValidationError
 from app.core.scope import IN_SCOPE_COMPANY_NAMES
 
+# Prefix external_code Branch -- HARUS sama persis dengan yang dikirim
+# _to_esuite_payload() ("ODOO-COMPANY-{id}"). Dipakai fitur "upsert by
+# external_code" (21 Agustus 2026), pola sama customer_sync_service.py.
+EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
+
 # Kode wilayah administratif eSuite untuk lokasi gedung yang dipakai.
 # Diisi MANUAL (bukan pull otomatis) karena jumlah Branch cuma 2 dan
 # lokasinya jarang berubah -- cara dapetinnya: panggil GET /administrative-areas
@@ -23,24 +28,64 @@ class BranchSyncService:
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, event: str = "upsert"):
-        companies = self.odoo.get_companies(IN_SCOPE_COMPANY_NAMES)
+    def sync(
+        self,
+        event: str = "upsert",
+        external_codes: str | None = None,
+        limit: int | None = None,
+    ):
+        odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
+        companies = self.odoo.get_companies(IN_SCOPE_COMPANY_NAMES, ids=odoo_ids)
 
         if not companies:
             raise ValidationError(
-                "Tidak ada res.company yang cocok dengan IN_SCOPE_COMPANY_NAMES",
+                "Tidak ada res.company yang cocok dengan IN_SCOPE_COMPANY_NAMES (cek juga external_codes kalau diisi)",
                 details={"expected_names": IN_SCOPE_COMPANY_NAMES},
             )
+
+        total_matched = len(companies)
+
+        # limit -- diagnostic aid, pola sama service lain (kirim cuma N
+        # company pertama). Default None -> behavior normal (semua company
+        # in-scope).
+        if limit is not None:
+            companies = companies[:limit]
 
         payload = [self._to_esuite_payload(c) for c in companies]
         esuite_result = self.esuite.push("branches", event=event, data=payload)
 
         return {
+            "total_matched_in_odoo": total_matched,
             "synced_count": len(payload),
             "external_codes": [item["basic_info"]["external_code"] for item in payload],
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
+
+    def _parse_external_codes(self, external_codes: str) -> list[int]:
+        """
+        Parse "ODOO-COMPANY-1,ODOO-COMPANY-2" -> [1, 2] -- pola sama dengan
+        customer_sync_service.py/product_sync_service.py, buat upsert Branch
+        tertentu saja tanpa nyentuh yang lain.
+        """
+        ids = []
+        for raw in external_codes.split(","):
+            code = raw.strip()
+            if not code:
+                continue
+            if not code.startswith(EXTERNAL_CODE_PREFIX):
+                raise ValidationError(
+                    f"external_code '{code}' tidak sesuai format '{EXTERNAL_CODE_PREFIX}{{id_odoo}}'",
+                    details={"expected_prefix": EXTERNAL_CODE_PREFIX},
+                )
+            id_part = code[len(EXTERNAL_CODE_PREFIX):]
+            if not id_part.isdigit():
+                raise ValidationError(
+                    f"external_code '{code}' -- bagian id bukan angka valid",
+                    details={"external_code": code},
+                )
+            ids.append(int(id_part))
+        return ids
 
     def _to_esuite_payload(self, company: dict) -> dict:
         # partner_id dari Odoo berbentuk [id, display_name] (many2one).

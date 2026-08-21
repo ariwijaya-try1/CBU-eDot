@@ -172,15 +172,21 @@ class CustomerSyncService:
             # payload dari vendor eSuite (root cause gagal upsert customer).
             # Fixed "customer" untuk semua record entity ini (bukan dari Odoo).
             "entity_type": "customer",
-            # phone/mobile/email -- ditambahkan 21 Agustus 2026. Skema
-            # `/customers` di Postman collection cuma contoh bare minimum,
-            # BUKAN daftar lengkap field yang diterima eSuite -- dikonfirmasi
-            # lewat live test manual (`?external_codes=ODOO-PARTNER-39353`),
-            # ketiga field ini SUKSES tersimpan & tampil balik di GET eSuite.
+            # phone/email -- ditambahkan 21 Agustus 2026. Skema `/customers`
+            # di Postman collection cuma contoh bare minimum, BUKAN daftar
+            # lengkap field yang diterima eSuite -- dikonfirmasi lewat live
+            # test manual (`?external_codes=ODOO-PARTNER-39353`), kedua
+            # field ini SUKSES tersimpan & tampil balik di GET eSuite.
             # Odoo balikin `False` (bukan None/"") untuk char field kosong --
             # `or ""` menormalkan itu jadi string kosong, BUKAN bikin field-nya
             # hilang dari payload (eSuite tetap butuh key-nya ada).
+            #
+            # "mobile" SENGAJA DIHAPUS LAGI (21 Agustus 2026, beberapa jam
+            # setelah ditambahkan) -- Odoo 19 instance CBU error "Invalid
+            # field 'mobile'" pas query res.partner. Field ini sudah resmi
+            # dihapus dari Contacts di Odoo 19 (di-merge ke `phone`,
+            # dikonfirmasi user). Tidak ada sumber data Odoo lagi untuk field
+            # ini, jadi tidak dikirim ke eSuite -- lihat odoo_client.py::get_customers().
             "phone": customer.get("phone") or "",
-            "mobile": customer.get("mobile") or "",
             "email": customer.get("email") or "",
         }

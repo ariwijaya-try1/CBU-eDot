@@ -19,6 +19,14 @@ def sync_pricelist(
             "pernah divalidasi live ke eSuite. Kosongkan untuk semua pricelist."
         ),
     ),
+    external_codes: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL (21 Agustus 2026) -- alternatif 'ids' di atas, format "
+            "'ODOO-PRICELIST-{id}' (mis. ODOO-PRICELIST-2293), konsisten dengan "
+            "entity lain. Kalau 'ids' JUGA diisi, external_codes yang dipakai."
+        ),
+    ),
     limit: int | None = Query(
         default=None,
         description="OPSIONAL -- diagnostik, proses cuma N pricelist pertama. Kosongkan untuk semua.",
@@ -53,6 +61,7 @@ def sync_pricelist(
     return service.sync(
         event=event,
         ids=ids,
+        external_codes=external_codes,
         limit=limit,
         batch_size=batch_size,
         include_payload=include_payload,
