@@ -16,3 +16,4 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-18T06:06:04.062858+00:00,stock-matrix,upsert,41,41,0,1,success,,6 produk verified di eSuite tapi tidak ketemu di Odoo
 2026-08-18T06:06:28.326814+00:00,stock-matrix,upsert,41,2,0,1,success,,6 produk verified di eSuite tapi tidak ketemu di Odoo
 2026-08-18T06:06:35.423979+00:00,stock-matrix,upsert,41,2,0,1,success,,6 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-08-21T06:26:07.064119+00:00,customer,upsert,2971,1,0,1,success,,
