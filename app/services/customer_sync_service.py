@@ -172,4 +172,15 @@ class CustomerSyncService:
             # payload dari vendor eSuite (root cause gagal upsert customer).
             # Fixed "customer" untuk semua record entity ini (bukan dari Odoo).
             "entity_type": "customer",
+            # phone/mobile/email -- ditambahkan 21 Agustus 2026. Skema
+            # `/customers` di Postman collection cuma contoh bare minimum,
+            # BUKAN daftar lengkap field yang diterima eSuite -- dikonfirmasi
+            # lewat live test manual (`?external_codes=ODOO-PARTNER-39353`),
+            # ketiga field ini SUKSES tersimpan & tampil balik di GET eSuite.
+            # Odoo balikin `False` (bukan None/"") untuk char field kosong --
+            # `or ""` menormalkan itu jadi string kosong, BUKAN bikin field-nya
+            # hilang dari payload (eSuite tetap butuh key-nya ada).
+            "phone": customer.get("phone") or "",
+            "mobile": customer.get("mobile") or "",
+            "email": customer.get("email") or "",
         }

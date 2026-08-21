@@ -402,6 +402,12 @@ class OdooClient:
         ids (OPSIONAL, 12 Agustus 2026): filter tambahan "id in ids" --
         dipakai buat upsert customer tertentu saja lewat external_code
         (lihat customer_sync_service.py). Kosongkan untuk behavior normal.
+
+        phone/mobile/email (21 Agustus 2026): ditambahkan setelah live test
+        `POST /sync/customers` konfirmasi field ini benar-benar tersimpan &
+        tampil di GET eSuite (beda dari currency yang masih pending -- lihat
+        CONFIG_NOTES.md). Field standar res.partner, sama nama-nya dengan
+        yang sudah dipakai di get_contacts().
         """
         conditions = [("customer_rank", ">", 0), ("active", "=", True)]
         if ids:
@@ -412,7 +418,7 @@ class OdooClient:
             "res.partner",
             "search_read",
             domain,
-            {"fields": ["id", "name", "company_type"]},
+            {"fields": ["id", "name", "company_type", "phone", "mobile", "email"]},
         )
 
     # ------------------------------------------------------------------
