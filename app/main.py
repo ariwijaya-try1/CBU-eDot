@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
-from app.api.routes.branch import router as branch_router
+from app.api.routes.branch import router as branch_router, deactivate_router as branch_deactivate_router
 from app.api.routes.warehouse import router as warehouse_router
 from app.api.routes.product_category import router as product_category_router
 from app.api.routes.product import router as product_router
@@ -50,6 +50,7 @@ def app_error_handler(request, exc: AppError):
 # dikasih tags jadi numpuk di grup "default"; sekarang dikelompokkan biar
 # gampang dibedain endpoint sync vs endpoint get-inspeksi Odoo (16 Agustus 2026).
 app.include_router(branch_router, prefix="/api", tags=["Sync"])
+app.include_router(branch_deactivate_router, prefix="/api", tags=["Deactivate"])
 app.include_router(warehouse_router, prefix="/api", tags=["Sync"])
 app.include_router(product_category_router, prefix="/api", tags=["Sync"])
 app.include_router(product_router, prefix="/api", tags=["Sync"])

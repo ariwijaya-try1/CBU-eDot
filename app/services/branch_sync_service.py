@@ -62,6 +62,40 @@ class BranchSyncService:
             "esuite_response": esuite_result,
         }
 
+    def deactivate(self, external_codes: str) -> dict:
+        """
+        Nonaktifkan Branch di eSuite (status -> "inactive") by external_code,
+        TANPA re-pull data dari Odoo -- payload yang dikirim sengaja MINIMAL
+        (cuma status + external_code, bukan full payload name/address seperti
+        sync()). Ini aman karena upsert eSuite terkonfirmasi bersifat
+        partial-merge (lihat CONFIG_NOTES.md, kasus field `cost` produk) --
+        field yang tidak dikirim TIDAK ikut ter-reset/hilang.
+
+        external_codes WAJIB diisi (tidak ada default "semua company") supaya
+        tidak ada risiko nonaktifkan branch secara tidak sengaja.
+        """
+        ids = self._parse_external_codes(external_codes)
+        if not ids:
+            raise ValidationError(
+                "external_codes wajib diisi minimal 1 (format 'ODOO-COMPANY-{id}')"
+            )
+
+        payload = [
+            {
+                "status": "inactive",
+                "basic_info": {"external_code": f"{EXTERNAL_CODE_PREFIX}{odoo_id}"},
+            }
+            for odoo_id in ids
+        ]
+        esuite_result = self.esuite.push("branches", event="upsert", data=payload)
+
+        return {
+            "deactivated_count": len(payload),
+            "external_codes": [item["basic_info"]["external_code"] for item in payload],
+            "payload_sent": payload,
+            "esuite_response": esuite_result,
+        }
+
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
         Parse "ODOO-COMPANY-1,ODOO-COMPANY-2" -> [1, 2] -- pola sama dengan

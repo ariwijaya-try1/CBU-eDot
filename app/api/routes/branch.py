@@ -2,6 +2,11 @@ from fastapi import APIRouter, Query
 from app.services.branch_sync_service import BranchSyncService
 
 router = APIRouter()
+# Router terpisah -- supaya endpoint deactivate ke-grup di Swagger tag
+# "Deactivate" sendiri (bukan numpuk di "Sync"), didaftarkan terpisah di
+# main.py (`tags=["Deactivate"]`). Tetap 1 file (branch.py) karena masih
+# entity yang sama, cuma beda router object buat keperluan tag saja.
+deactivate_router = APIRouter()
 service = BranchSyncService()
 
 
@@ -27,3 +32,23 @@ def sync_branch(
     event=upsert: dipakai untuk sync berikutnya (default).
     """
     return service.sync(event=event, external_codes=external_codes, limit=limit)
+
+
+@deactivate_router.post("/deactivate/branch")
+def deactivate_branch(
+    external_codes: str = Query(
+        ...,
+        description=(
+            "WAJIB -- external_code Branch yang mau dinonaktifkan (status -> "
+            "inactive), comma-separated, format 'ODOO-COMPANY-{id}' (mis. "
+            "ODOO-COMPANY-1,ODOO-COMPANY-2)."
+        ),
+    ),
+):
+    """
+    Nonaktifkan Branch di eSuite by external_code (status: "inactive").
+    Payload yang dikirim ke eSuite MINIMAL -- cuma status + external_code,
+    field lain (name/address) TIDAK ikut dikirim/direset (upsert eSuite
+    bersifat partial-merge).
+    """
+    return service.deactivate(external_codes=external_codes)
