@@ -71,27 +71,29 @@ class BranchSyncService:
         partial-merge (lihat CONFIG_NOTES.md, kasus field `cost` produk) --
         field yang tidak dikirim TIDAK ikut ter-reset/hilang.
 
+        external_code diterima APA ADANYA (BEDA dari _parse_external_codes()
+        yang dipakai sync() -- itu mewajibkan format 'ODOO-COMPANY-{id}'
+        karena perlu resolve ke id Odoo buat query res.company). deactivate()
+        tidak butuh id Odoo sama sekali, jadi tidak boleh dibatasi ke format
+        itu -- termasuk buat nonaktifkan data pre-existing/legacy eSuite yang
+        bukan hasil sync kita (mis. "ODOO-BR-001").
+
         external_codes WAJIB diisi (tidak ada default "semua company") supaya
         tidak ada risiko nonaktifkan branch secara tidak sengaja.
         """
-        ids = self._parse_external_codes(external_codes)
-        if not ids:
-            raise ValidationError(
-                "external_codes wajib diisi minimal 1 (format 'ODOO-COMPANY-{id}')"
-            )
+        codes = [c.strip() for c in external_codes.split(",") if c.strip()]
+        if not codes:
+            raise ValidationError("external_codes wajib diisi minimal 1")
 
         payload = [
-            {
-                "status": "inactive",
-                "basic_info": {"external_code": f"{EXTERNAL_CODE_PREFIX}{odoo_id}"},
-            }
-            for odoo_id in ids
+            {"status": "inactive", "basic_info": {"external_code": code}}
+            for code in codes
         ]
         esuite_result = self.esuite.push("branches", event="upsert", data=payload)
 
         return {
             "deactivated_count": len(payload),
-            "external_codes": [item["basic_info"]["external_code"] for item in payload],
+            "external_codes": codes,
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }

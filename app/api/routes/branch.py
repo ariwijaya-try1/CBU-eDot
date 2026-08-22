@@ -39,9 +39,11 @@ def deactivate_branch(
     external_codes: str = Query(
         ...,
         description=(
-            "WAJIB -- external_code Branch yang mau dinonaktifkan (status -> "
-            "inactive), comma-separated, format 'ODOO-COMPANY-{id}' (mis. "
-            "ODOO-COMPANY-1,ODOO-COMPANY-2)."
+            "WAJIB -- external_code Branch di eSuite yang mau dinonaktifkan "
+            "(status -> inactive), comma-separated. Diterima APA ADANYA "
+            "(TIDAK divalidasi format 'ODOO-COMPANY-{id}') -- bisa data hasil "
+            "sync kita maupun data pre-existing/legacy eSuite (mis. "
+            "'ODOO-BR-001')."
         ),
     ),
 ):

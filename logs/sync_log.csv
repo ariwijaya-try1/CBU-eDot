@@ -19,3 +19,7 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-21T06:26:07.064119+00:00,customer,upsert,2971,1,0,1,success,,
 2026-08-21T07:40:14.778915+00:00,customer,upsert,2972,1,0,1,success,,
 2026-08-21T07:40:17.632112+00:00,customer,upsert,2972,1,0,1,success,,
+2026-08-22T02:32:57.176147+00:00,product,upsert,1238,1,0,1,success,,
+2026-08-22T03:06:26.005558+00:00,customer,upsert,2972,2,0,1,success,,
+2026-08-22T03:06:29.233395+00:00,customer,upsert,2972,2,0,1,success,,
+2026-08-22T03:06:51.590670+00:00,customer,upsert,2972,2,0,1,success,,
