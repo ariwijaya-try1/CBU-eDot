@@ -8,7 +8,7 @@ from app.api.routes.product import router as product_router
 from app.api.routes.customer import router as customer_router
 from app.api.routes.customer_group import router as customer_group_router
 from app.api.routes.customer_grouping import router as customer_grouping_router
-from app.api.routes.customer_salesman_mapping import router as customer_salesman_mapping_router
+from app.api.routes.customer_sales_mapping import router as customer_sales_mapping_router
 from app.api.routes.stock_matrix import router as stock_matrix_router
 from app.api.routes.pricelist import router as pricelist_router
 from app.api.routes.salesman_division import router as salesman_division_router
@@ -59,7 +59,7 @@ app.include_router(product_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_group_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_grouping_router, prefix="/api", tags=["Mapping"])
-app.include_router(customer_salesman_mapping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])
 app.include_router(pricelist_router, prefix="/api", tags=["Sync"])
 app.include_router(salesman_division_router, prefix="/api", tags=["Sync"])
