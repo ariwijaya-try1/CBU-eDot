@@ -10,6 +10,33 @@ from app.core.sync_logger import log_sync_result
 # (ADMINISTRATIVE_AREA di branch_sync_service.py, UOM_MAPPING di product_sync_service.py).
 CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
 
+# Tax Transaction (kode "04", "DPP Nilai Lain") -- WAJIB diisi, dikonfirmasi
+# LANGSUNG oleh dev vendor eSuite: field "invoice.tax.tax_transaction" MANDATORY
+# di endpoint upsert Customer (root cause kalau tidak diisi). Fixed value SAMA
+# untuk SEMUA customer (bukan dari Odoo, tidak ada sumber data per-customer) --
+# pola sama dengan CURRENCY & "entity_type" di _to_esuite_payload() (konstanta
+# wajib yang di-hardcode, bukan hasil resolve dari Odoo).
+TAX_TRANSACTION = {
+    "id": "697c890679e59420ead8ef36",
+    "code": "04",
+    "name": "DPP Nilai Lain",
+}
+
+# Address Type -- fixed "Delivery Address" utk SEMUA address customer,
+# DIINSTRUKSIKAN LANGSUNG user 24 Agustus 2026 sebagai default (bukan
+# di-resolve per customer, tidak ada sumber data lain di Odoo utk field
+# ini). Id sesuai contoh payload resmi vendor.
+ADDRESS_TYPE = {
+    "id": "01KYNS4MBNF5GQKQN5VWV4DBWJ",
+    "name": "Delivery Address",
+}
+
+# Country -- fixed Indonesia utk SEMUA address customer (bisnis 100%
+# domestik), pola sama dengan CURRENCY/TAX_TRANSACTION di atas -- BUKAN
+# hasil resolve dari Odoo, dikonfirmasi user 24 Agustus 2026 pakai contoh
+# resmi vendor apa adanya.
+COUNTRY = {"id": "ID", "name": "Indonesia", "code": ""}
+
 # Mapping company_type (Odoo) -> type (eSuite). Dikonfirmasi user 7 Agustus 2026:
 # field Odoo yang benar itu company_type, BUKAN res.partner.type (itu jenis alamat).
 CUSTOMER_TYPE_MAPPING = {
@@ -168,6 +195,15 @@ class CustomerSyncService:
             "type": self._resolve_customer_type(customer.get("company_type")),
             "status": "active",
             "currency": CURRENCY,
+            # invoice.tax.tax_transaction -- WAJIB, ditambahkan 24 Agustus 2026
+            # setelah dev vendor eSuite konfirmasi field ini mandatory di endpoint
+            # upsert Customer. Nested 3 level sesuai skema resmi vendor -- lihat
+            # TAX_TRANSACTION di atas untuk detail.
+            "invoice": {
+                "tax": {
+                    "tax_transaction": TAX_TRANSACTION,
+                }
+            },
             # entity_type -- WAJIB, ditambahkan 11 Agustus 2026 setelah revisi
             # payload dari vendor eSuite (root cause gagal upsert customer).
             # Fixed "customer" untuk semua record entity ini (bukan dari Odoo).
@@ -189,4 +225,54 @@ class CustomerSyncService:
             # ini, jadi tidak dikirim ke eSuite -- lihat odoo_client.py::get_customers().
             "phone": customer.get("phone") or "",
             "email": customer.get("email") or "",
+            # addresses -- ditambahkan 24 Agustus 2026 atas instruksi user,
+            # lihat _to_esuite_address() untuk detail field & keputusan
+            # administrative_level (sengaja TIDAK dikirim, PENDING vendor).
+            "addresses": [self._to_esuite_address(customer)],
         }
+
+    def _to_esuite_address(self, customer: dict) -> dict:
+        """
+        Bangun 1 objek address dari data alamat res.partner (street/
+        partner_latitude/partner_longitude -- field sama yang dipakai
+        branch_sync_service.py::get_partner_address(), tapi di sini diambil
+        LANGSUNG dari get_customers() -- lihat catatan di
+        odoo_client.py::get_customers()).
+
+        Keputusan user (24 Agustus 2026):
+        - "id": "" tetap (address baru tiap upsert, sesuai contoh payload
+          resmi vendor -- BUKAN id address eSuite yang sudah ada).
+        - "address_type": fixed ADDRESS_TYPE ("Delivery Address") utk semua
+          customer, bukan per-customer.
+        - "street_address": dari field Odoo "street" (res.partner) apa
+          adanya -- tidak digabung field lain (street2/city/dll).
+        - "country": fixed COUNTRY (Indonesia) utk semua customer.
+        - "longitude"/"latitude": HANYA dikirim kalau ADA datanya di Odoo
+          ("tidak usah kirim jika tidak ada dari odoo" -- instruksi user).
+          Field float Odoo yang kosong balik 0.0 (BUKAN None/False seperti
+          field char) -- truthy check di sini SENGAJA (bukan "is not None")
+          supaya 0.0 juga dianggap "tidak ada data", konsisten dengan pola
+          `or ""` yang sudah dipakai buat phone/email & get_partner_address().
+        - "administrative_level" (province/city/district/sub_district, skema
+          eSuite pakai kode BPS) SENGAJA TIDAK dikirim -- Odoo tidak punya
+          granularitas 4-level itu (beda dari Branch yang cukup diisi manual
+          via ADMINISTRATIVE_AREA karena cuma ~3 record; Customer bisa
+          ribuan). Kalau ternyata field ini mandatory di endpoint /customers,
+          upsert akan reject -- itu jadi bukti konkret buat tanya vendor cara
+          resolve yang benar, keputusan user supaya tidak nebak sekarang.
+        """
+        address = {
+            "id": "",
+            "address_type": ADDRESS_TYPE,
+            "street_address": customer.get("street") or "",
+            "country": COUNTRY,
+            "is_primary_address": True,
+        }
+
+        lat = customer.get("partner_latitude")
+        lon = customer.get("partner_longitude")
+        if lat and lon:
+            address["longitude"] = lon
+            address["latitude"] = lat
+
+        return address

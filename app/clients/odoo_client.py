@@ -439,6 +439,14 @@ class OdooClient:
         masih ada di Odoo versi lama/dokumentasi umum. Jangan tambahkan
         balik tanpa cek dulu apakah field ini benar-benar ada di instance
         Odoo yang dipakai.
+
+        street/partner_latitude/partner_longitude (24 Agustus 2026): ditambah
+        untuk isi "addresses[]" di payload Customer -- field SAMA yang dipakai
+        get_partner_address() (branch_sync_service.py), tapi di sini LANGSUNG
+        masuk ke query bulk ini (bukan panggil terpisah per record) karena
+        volume Customer bisa ribuan -- N+1 query per customer terlalu mahal,
+        beda dari Branch yang cuma ~3 record. Lihat
+        customer_sync_service.py::_to_esuite_address().
         """
         conditions = [("customer_rank", ">", 0), ("active", "=", True)]
         if ids:
@@ -449,7 +457,12 @@ class OdooClient:
             "res.partner",
             "search_read",
             domain,
-            {"fields": ["id", "name", "company_type", "phone", "email"]},
+            {
+                "fields": [
+                    "id", "name", "company_type", "phone", "email",
+                    "street", "partner_latitude", "partner_longitude",
+                ]
+            },
         )
 
     # ------------------------------------------------------------------
