@@ -27,17 +27,17 @@ def map_customer_sales(
         ...,
         description=(
             "WAJIB -- employee_id Salesman di eSuite, comma-separated kalau "
-            ">1 salesman. TIDAK ada sumber resolve otomatis (akun Salesman "
-            "dibuat manual di eSuite) -- ambil manual dari UI eSuite."
+            ">1 salesman. Nama di-RESOLVE OTOMATIS lewat GET /employee?"
+            "employee_id=... (hindari typo) -- tidak perlu isi salesman_names."
         ),
     ),
-    salesman_names: str = Query(
-        ...,
+    salesman_names: str | None = Query(
+        None,
         description=(
-            "WAJIB -- nama Salesman, comma-separated, urutan HARUS berpasangan "
-            "1-1 dengan salesman_ids (salesman_names[0] = nama utk "
-            "salesman_ids[0], dst). Vendor eSuite konfirmasi: tanpa name, "
-            "mapping berhasil secara data TAPI nama tidak muncul di UI."
+            "OPSIONAL -- override manual nama Salesman kalau perlu (mis. GET "
+            "/employee lagi down), comma-separated, urutan HARUS berpasangan "
+            "1-1 dengan salesman_ids. Kalau dikosongkan (default), nama "
+            "di-resolve otomatis dari eSuite per salesman_id."
         ),
     ),
 ):
@@ -53,6 +53,9 @@ def map_customer_sales(
     GANTI endpoint lama /mapping/customer-salesman (yang cuma kirim
     salesmans, BERBAHAYA -- bisa nge-blank-in branch existing tanpa
     peringatan). Endpoint lama itu SUDAH TIDAK didaftarkan di main.py.
+
+    UPDATE 24 Agustus 2026: nama Salesman sekarang di-auto-resolve dari
+    eSuite (GET /employee?employee_id=...) kalau salesman_names tidak diisi.
     """
     return service.map_to_sales(
         external_codes=external_codes,

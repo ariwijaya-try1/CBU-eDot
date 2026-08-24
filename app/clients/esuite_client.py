@@ -86,6 +86,26 @@ class EsuiteClient:
         )
         return self._handle_response(response, request_id)
 
+    def pull_by_param(self, entity_path: str, param_name: str, param_value: str) -> dict:
+        """
+        GET (pull) dengan query param custom (BUKAN page/limit seperti pull())
+        -- dipakai utk endpoint eSuite yang lookup 1 record spesifik by field
+        tertentu, mis. GET /employee?employee_id=202600002 (dipakai
+        CustomerSalesMappingService._resolve_salesmen(), 24 Agustus 2026,
+        resolve nama Salesman otomatis dari employee_id -- hindari typo nama
+        manual). Response tetap bentuk {"data": [...], "meta": {...}} SAMA
+        seperti pull(), bukan single-object -- caller yang ambil data[0].
+        """
+        raw_body = b""
+        request_id = uuid.uuid4().hex
+        headers = self._headers(raw_body, request_id)
+
+        url = f"{self.base_url}/{entity_path}"
+        response = self._safe_request(
+            "GET", url, headers=headers, params={param_name: param_value}
+        )
+        return self._handle_response(response, request_id)
+
     def find_by_external_codes(
         self, entity_path: str, codes: set[str], page_size: int = 200
     ) -> dict[str, dict]:
