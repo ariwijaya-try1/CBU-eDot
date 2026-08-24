@@ -52,11 +52,13 @@ EXTERNAL_CODE_PREFIX = "CBU-CUSTGROUP-"
 # `entity_type` di Customer (11 Agustus 2026) -- field yang didokumentasikan
 # "opsional"/tidak disebut di teks "Required fields", ternyata di backend
 # eSuite tetap wajib, dan pelanggarannya bukan error eksplisit tapi silent
-# failure (200 OK, record tidak benar-benar tersimpan). Ini MASIH DUGAAN
-# (belum dikonfirmasi vendor) -- tapi karena additive & rendah risiko, field
-# ini ditambahkan supaya payload konsisten dengan contoh Postman yang sudah
-# terbukti bekerja.
-CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
+# failure (200 OK, record tidak benar-benar tersimpan).
+#
+# ✅ ID DIKONFIRMASI user 24 Agustus 2026: "6a695cc1917e8fc836359505" =
+# IDR (currency default satu-satunya di seluruh bisnis) -- id ini WAJIB
+# PERSIS benar (salah id currency = upsert customer group berpotensi
+# gagal/salah). Value di bawah SUDAH BENAR, tidak perlu diubah.
+CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dikonfirmasi user 24 Agustus 2026
 
 
 class CustomerGroupSyncService:

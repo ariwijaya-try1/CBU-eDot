@@ -152,6 +152,44 @@ class CustomerSyncService:
         log_sync_result("customer", event, result)
         return result
 
+    def deactivate(self, external_codes: str) -> dict:
+        """
+        Nonaktifkan Customer di eSuite (status -> "inactive") by external_code,
+        TANPA re-pull data dari Odoo -- payload yang dikirim sengaja MINIMAL
+        (cuma status + external_code, bukan full payload name/type/addresses/
+        dst seperti sync()). Aman karena upsert eSuite bersifat partial-merge
+        (lihat CONFIG_NOTES.md) -- field yang tidak dikirim TIDAK ikut
+        ter-reset/hilang. Pola SAMA PERSIS dengan BranchSyncService.deactivate()
+        (24 Agustus 2026, convention endpoint deactivate entity lain -- lihat
+        [[branch_deactivate_endpoint]]).
+
+        external_code diterima APA ADANYA (BEDA dari _parse_external_codes()
+        yang dipakai sync() -- itu mewajibkan format 'ODOO-PARTNER-{id}' karena
+        perlu resolve ke id Odoo buat query res.partner). deactivate() tidak
+        butuh id Odoo sama sekali, jadi tidak boleh dibatasi ke format itu --
+        termasuk buat nonaktifkan data pre-existing/legacy eSuite yang bukan
+        hasil sync kita.
+
+        external_codes WAJIB diisi (tidak ada default "semua customer") supaya
+        tidak ada risiko nonaktifkan customer secara tidak sengaja.
+        """
+        codes = [c.strip() for c in external_codes.split(",") if c.strip()]
+        if not codes:
+            raise ValidationError("external_codes wajib diisi minimal 1")
+
+        payload = [
+            {"status": "inactive", "external_code": code}
+            for code in codes
+        ]
+        esuite_result = self.esuite.push("customers", event="upsert", data=payload)
+
+        return {
+            "deactivated_count": len(payload),
+            "external_codes": codes,
+            "payload_sent": payload,
+            "esuite_response": esuite_result,
+        }
+
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
         Parse "ODOO-PARTNER-1,ODOO-PARTNER-2" -> [1, 2] -- pola sama dengan

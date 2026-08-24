@@ -2,6 +2,11 @@ from fastapi import APIRouter, Query
 from app.services.customer_sync_service import CustomerSyncService
 
 router = APIRouter()
+# Router terpisah -- supaya endpoint deactivate ke-grup di Swagger tag
+# "Deactivate" sendiri (bukan numpuk di "Sync"), didaftarkan terpisah di
+# main.py (`tags=["Deactivate"]`). Pola SAMA dengan branch.py (convention
+# endpoint deactivate, lihat [[branch_deactivate_endpoint]]).
+deactivate_router = APIRouter()
 service = CustomerSyncService()
 
 
@@ -58,3 +63,25 @@ def sync_customers(
         external_codes=external_codes,
         include_payload=include_payload,
     )
+
+
+@deactivate_router.post("/deactivate/customer")
+def deactivate_customer(
+    external_codes: str = Query(
+        ...,
+        description=(
+            "WAJIB -- external_code Customer di eSuite yang mau dinonaktifkan "
+            "(status -> inactive), comma-separated. Diterima APA ADANYA "
+            "(TIDAK divalidasi format 'ODOO-PARTNER-{id}') -- bisa data hasil "
+            "sync kita maupun data pre-existing/legacy eSuite."
+        ),
+    ),
+):
+    """
+    Nonaktifkan Customer di eSuite by external_code (status: "inactive").
+    Payload yang dikirim ke eSuite MINIMAL -- cuma status + external_code,
+    field lain (name/type/addresses/invoice/dst) TIDAK ikut dikirim/direset
+    (upsert eSuite bersifat partial-merge). Pola sama dengan
+    POST /deactivate/branch.
+    """
+    return service.deactivate(external_codes=external_codes)
