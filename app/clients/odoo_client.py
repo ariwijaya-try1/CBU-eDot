@@ -549,6 +549,16 @@ class OdooClient:
                 # supaya GET /odoo/customer & /odoo/contact langsung kelihatan
                 # salesperson-nya tanpa perlu panggil endpoint terpisah.
                 "user_id",
+                # street/partner_latitude/partner_longitude -- disamakan
+                # (24 Agustus 2026) dengan get_customers() yang sekarang
+                # sudah tarik field ini juga (dipakai isi "addresses[]" di
+                # payload upsert Customer, lihat customer_sync_service.py::
+                # _to_esuite_address()). Ditambahkan di sini juga (diagnostic-
+                # only, additif) supaya GET /odoo/customer & /odoo/contact
+                # kelihatan data alamat yang SAMA PERSIS dengan yang bakal
+                # dikirim ke eSuite -- bisa dicek dulu lewat Swagger sebelum
+                # sync, tanpa perlu panggil endpoint terpisah.
+                "street", "partner_latitude", "partner_longitude",
             ],
         }
         if limit:
