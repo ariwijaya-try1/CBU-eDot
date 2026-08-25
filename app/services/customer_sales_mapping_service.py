@@ -29,10 +29,17 @@ class CustomerSalesMappingService:
     eSuite (GET /employee?employee_id=...), BUKAN wajib manual lagi. Root
     cause lama ("bridge tidak punya sumber data Salesman") TERNYATA tidak
     berlaku -- eSuite sendiri punya endpoint lookup employee by id (info
-    user). `salesman_names` sekarang OPSIONAL: kalau diisi, dipakai apa
-    adanya (override manual, mis. kalau GET /employee down atau nama di
-    eSuite mau dikoreksi paksa); kalau kosong (default), nama di-resolve
-    otomatis per salesman_id lewat `_resolve_salesmen()`.
+    user). `salesman_names` sekarang OPSIONAL: kalau diisi, HANYA override
+    NAME yang ditampilkan; kalau kosong (default), nama JUGA di-resolve
+    otomatis.
+
+    RALAT 24 Agustus 2026 (dikoreksi user, sama sesi): `id` di payload
+    sales.salesmans[] BUKAN employee_id (`salesman_ids`), TAPI id INTERNAL
+    eSuite yang di-resolve dari GET /employee. Konsekuensinya: GET /employee
+    SEKARANG WAJIB dipanggil di SETIAP request (bahkan saat `salesman_names`
+    diisi manual) -- `salesman_names` TIDAK BISA lagi jadi fallback total
+    kalau GET /employee down (beda dari niat awal), karena id internal
+    tidak ada sumber lain. Lihat `_resolve_salesmen()` untuk detail.
     """
 
     def __init__(self):
@@ -65,9 +72,19 @@ class CustomerSalesMappingService:
                 "branch doang (salesman existing akan ke-blank-in)"
             )
 
+        # RALAT 24 Agustus 2026 (dikoreksi user): `id` yang dikirim ke payload
+        # sales.salesmans[] BUKAN employee_id (sid) -- HARUS id internal
+        # eSuite (field "id" di response GET /employee, mis.
+        # "6a695ce79b7307901e351f33"), BUKAN "employee_id" (mis. "202600002").
+        # Makanya GET /employee sekarang WAJIB dipanggil selalu (bukan cuma
+        # saat auto-resolve nama) -- id internal itu SATU-SATUNYA sumbernya,
+        # tidak ada cara lain buat dapetin dari caller. Lihat _resolve_salesmen().
+        resolved_salesmen = self._resolve_salesmen(sid_list)
+
         if salesman_names:
-            # Override manual (opsional) -- caller tetap bisa paksa isi nama
-            # sendiri, mis. kalau GET /employee lagi down.
+            # Override manual (opsional) -- HANYA override NAME yang
+            # ditampilkan, `id` TETAP dari hasil resolve di atas (WAJIB id
+            # internal eSuite, tidak bisa di-supply manual oleh caller).
             sname_list = [n.strip() for n in salesman_names.split(",") if n.strip()]
             if len(sid_list) != len(sname_list):
                 raise ValidationError(
@@ -76,12 +93,13 @@ class CustomerSalesMappingService:
                     details={"salesman_ids": sid_list, "salesman_names": sname_list},
                 )
             salesmans_payload = [
-                {"id": sid, "name": sname} for sid, sname in zip(sid_list, sname_list)
+                {"id": r["id"], "name": sname}
+                for r, sname in zip(resolved_salesmen, sname_list)
             ]
         else:
-            # Default (24 Agustus 2026): auto-resolve nama dari eSuite,
-            # hindari typo manual.
-            salesmans_payload = self._resolve_salesmen(sid_list)
+            # Default (24 Agustus 2026): auto-resolve id+nama dari eSuite,
+            # hindari typo manual & id salah.
+            salesmans_payload = resolved_salesmen
 
         resolved_branches = self._resolve_branches(set(branch_codes))
         missing_branches = [c for c in branch_codes if c not in resolved_branches]
@@ -116,24 +134,64 @@ class CustomerSalesMappingService:
             "esuite_response": esuite_result,
         }
 
+    def unmap_from_sales(self, external_codes: str) -> dict:
+        """
+        Hapus mapping Branch DAN Salesman dari Customer SEKALIGUS -- kirim
+        `sales.branchs: []` & `sales.salesmans: []` (array kosong, BUKAN
+        field dihilangkan). Kebalikan dari map_to_sales(), pakai root cause
+        YANG SAMA (info dev eSuite, 22 Agustus 2026): branchs & salesmans di
+        dalam object `sales` saling ikut ke-reset kalau salah satu di-set
+        tanpa yang lain -- jadi mengosongkan salah satu otomatis
+        mengosongkan yang lain juga. TIDAK ADA cara unmap branch/salesman
+        secara terpisah (batasan yang sama dengan map_to_sales(), bukan
+        keterbatasan baru).
+
+        Field Customer lain (name/addresses/invoice/dst) TIDAK ikut
+        dikirim/direset -- partial-merge tetap berlaku di level TOP payload,
+        cuma object `sales` yang diganti isinya jadi kosong.
+        """
+        codes = [c.strip() for c in external_codes.split(",") if c.strip()]
+        if not codes:
+            raise ValidationError("external_codes wajib diisi minimal 1")
+
+        payload = [
+            {"external_code": code, "sales": {"branchs": [], "salesmans": []}}
+            for code in codes
+        ]
+        esuite_result = self.esuite.push("customers", event="upsert", data=payload)
+
+        return {
+            "unmapped_count": len(payload),
+            "external_codes": codes,
+            "payload_sent": payload,
+            "esuite_response": esuite_result,
+        }
+
     def _resolve_salesmen(self, sid_list: list[str]) -> list[dict]:
         """
         Resolve employee_id Salesman -> {id, name} via GET eSuite
         /employee?employee_id=... (per-id, BUKAN pull-list-lalu-filter
         seperti _resolve_branches() -- endpoint ini memang didesain lookup
         1 employee_id per call, response tetap bentuk {"data": [...]} berisi
-        1 record). Dipakai sebagai default (24 Agustus 2026) supaya caller
-        cukup kasih salesman_ids, tidak perlu ketik nama manual (hindari
-        typo -- nama tidak muncul benar di UI eSuite kalau typo, pola sama
-        seperti gap customer_groups[].name).
+        1 record). SELALU dipanggil (bukan cuma saat auto-resolve nama) --
+        lihat RALAT di bawah, `id` payload WAJIB hasil resolve ini.
 
-        `id` yang dikirim balik ke payload sales.salesmans[] TETAP sid asli
-        (employee_id, mis. "202600002") -- BUKAN `id` internal eSuite (mis.
-        "6a695ce7..."), karena field itu yang sudah terbukti dipakai &
-        bekerja di payload sales.salesmans[] sebelumnya (lihat sample
-        maping-customer-sales.json) -- cuma nama-nya yang di-auto-resolve.
+        RALAT 24 Agustus 2026 (dikoreksi user, sebelumnya SALAH): `id` yang
+        dikirim ke payload sales.salesmans[] BUKAN sid/employee_id (mis.
+        "202600002"), TAPI `id` INTERNAL eSuite (field "id" di response GET
+        /employee, mis. "6a695ce79b7307901e351f33"). Asumsi lama ("id = sid,
+        terbukti jalan di sample maping-customer-sales.json") SALAH --
+        sample itu sekadar contoh awal yang belum benar-benar divalidasi
+        eSuite, dikoreksi user dari hasil GET /customers nyata (2 entry nama
+        sama, id beda -- yang dipakai eSuite adalah id internal, bukan
+        employee_id).
 
-        Return: [{"id": sid, "name": ...}, ...] urutan sama dengan sid_list.
+        employee_id (sid) TETAP dipakai sebagai query param lookup (`GET
+        /employee?employee_id=sid`) -- itu satu-satunya cara resolve id
+        internal, caller tidak mungkin tau/isi id internal secara manual.
+
+        Return: [{"id": <id internal eSuite>, "name": ...}, ...] urutan
+        sama dengan sid_list.
         """
         resolved = []
         for sid in sid_list:
@@ -142,11 +200,11 @@ class CustomerSalesMappingService:
             if not records:
                 raise ValidationError(
                     f"salesman_id '{sid}' tidak ditemukan di eSuite (GET "
-                    "/employee kosong) -- cek employee_id benar, atau isi "
-                    "salesman_names manual sebagai override",
+                    "/employee kosong) -- cek employee_id benar",
                     details={"salesman_id": sid},
                 )
-            resolved.append({"id": sid, "name": records[0].get("name") or ""})
+            record = records[0]
+            resolved.append({"id": record.get("id") or "", "name": record.get("name") or ""})
         return resolved
 
     def _resolve_branches(self, codes_wanted: set) -> dict:

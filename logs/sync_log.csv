@@ -29,3 +29,6 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-22T07:05:14.764653+00:00,stock-matrix,upsert,1,1,0,1,success,,
 2026-08-22T07:23:06.753190+00:00,stock-matrix,upsert,1,1,0,1,success,,
 2026-08-22T07:49:32.803722+00:00,stock-matrix,upsert,1,1,0,1,success,,
+2026-08-25T01:05:51.839912+00:00,customer,upsert,2976,5,0,1,success,,
+2026-08-25T01:41:20.001270+00:00,customer,upsert,2976,5,0,1,success,,
+2026-08-25T02:06:42.231392+00:00,customer,upsert,1,1,0,1,success,,

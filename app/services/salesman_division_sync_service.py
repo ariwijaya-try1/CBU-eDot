@@ -73,6 +73,40 @@ class SalesmanDivisionSyncService:
             "esuite_response": esuite_result,
         }
 
+    def deactivate(self, external_codes: str) -> dict:
+        """
+        Nonaktifkan Salesman Division di eSuite (status -> "inactive") by
+        external_code, TANPA re-pull data dari Odoo -- payload sengaja
+        MINIMAL (cuma status + external_code, bukan full payload name/code/
+        employees seperti sync()). Aman krn upsert eSuite partial-merge.
+        Pola SAMA PERSIS dengan BranchSyncService.deactivate() &
+        CustomerSyncService.deactivate() (convention endpoint deactivate,
+        24 Agustus 2026 -- lihat [[branch_deactivate_endpoint]]).
+
+        external_code diterima APA ADANYA (BEDA dari _parse_external_codes()
+        yang dipakai sync() -- itu mewajibkan format 'ODOO-SALESTEAM-{id}'
+        karena perlu resolve ke id Odoo). deactivate() tidak butuh id Odoo
+        sama sekali.
+
+        external_codes WAJIB diisi (tidak ada default "semua division").
+        """
+        codes = [c.strip() for c in external_codes.split(",") if c.strip()]
+        if not codes:
+            raise ValidationError("external_codes wajib diisi minimal 1")
+
+        payload = [
+            {"status": "inactive", "external_code": code}
+            for code in codes
+        ]
+        esuite_result = self.esuite.push("salesman-division", event="upsert", data=payload)
+
+        return {
+            "deactivated_count": len(payload),
+            "external_codes": codes,
+            "payload_sent": payload,
+            "esuite_response": esuite_result,
+        }
+
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
         Parse "ODOO-SALESTEAM-1,ODOO-SALESTEAM-2" -> [1, 2] -- pola sama

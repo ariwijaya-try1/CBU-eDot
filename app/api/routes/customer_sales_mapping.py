@@ -2,6 +2,10 @@ from fastapi import APIRouter, Query
 from app.services.customer_sales_mapping_service import CustomerSalesMappingService
 
 router = APIRouter()
+# Router terpisah -- endpoint un-map ke-grup di Swagger tag "Un-Map" sendiri
+# (bukan numpuk di "Mapping"), didaftarkan terpisah di main.py. Pola SAMA
+# dengan deactivate_router (branch.py/customer.py/salesman_division.py).
+unmap_router = APIRouter()
 service = CustomerSalesMappingService()
 
 
@@ -26,18 +30,22 @@ def map_customer_sales(
     salesman_ids: str = Query(
         ...,
         description=(
-            "WAJIB -- employee_id Salesman di eSuite, comma-separated kalau "
-            ">1 salesman. Nama di-RESOLVE OTOMATIS lewat GET /employee?"
-            "employee_id=... (hindari typo) -- tidak perlu isi salesman_names."
+            "WAJIB -- employee_id Salesman di eSuite (dipakai sebagai query "
+            "param lookup GET /employee?employee_id=...), comma-separated "
+            "kalau >1 salesman. id+nama YANG DIKIRIM KE PAYLOAD selalu "
+            "di-RESOLVE OTOMATIS dari hasil lookup itu (BUKAN employee_id "
+            "ini langsung -- eSuite butuh id INTERNAL, beda dari employee_id)."
         ),
     ),
     salesman_names: str | None = Query(
         None,
         description=(
-            "OPSIONAL -- override manual nama Salesman kalau perlu (mis. GET "
-            "/employee lagi down), comma-separated, urutan HARUS berpasangan "
-            "1-1 dengan salesman_ids. Kalau dikosongkan (default), nama "
-            "di-resolve otomatis dari eSuite per salesman_id."
+            "OPSIONAL -- override manual NAMA Salesman saja (mis. nama di "
+            "eSuite mau dikoreksi paksa), comma-separated, urutan HARUS "
+            "berpasangan 1-1 dengan salesman_ids. `id` TETAP selalu hasil "
+            "resolve GET /employee (tidak bisa di-override/dilewati -- id "
+            "internal eSuite tidak ada sumber lain). Kalau dikosongkan "
+            "(default), nama JUGA di-resolve otomatis."
         ),
     ),
 ):
@@ -54,8 +62,13 @@ def map_customer_sales(
     salesmans, BERBAHAYA -- bisa nge-blank-in branch existing tanpa
     peringatan). Endpoint lama itu SUDAH TIDAK didaftarkan di main.py.
 
-    UPDATE 24 Agustus 2026: nama Salesman sekarang di-auto-resolve dari
-    eSuite (GET /employee?employee_id=...) kalau salesman_names tidak diisi.
+    UPDATE 24 Agustus 2026: nama Salesman di-auto-resolve dari eSuite (GET
+    /employee?employee_id=...) kalau salesman_names tidak diisi.
+
+    RALAT 24 Agustus 2026 (dikoreksi user): `id` yang dikirim ke
+    sales.salesmans[] BUKAN employee_id (salesman_ids) -- WAJIB id INTERNAL
+    eSuite, di-resolve otomatis dari GET /employee. GET /employee jadi WAJIB
+    dipanggil di setiap request (termasuk saat salesman_names diisi manual).
     """
     return service.map_to_sales(
         external_codes=external_codes,
@@ -63,3 +76,28 @@ def map_customer_sales(
         salesman_ids=salesman_ids,
         salesman_names=salesman_names,
     )
+
+
+@unmap_router.post("/unmap/customer-sales")
+def unmap_customer_sales(
+    external_codes: str = Query(
+        ...,
+        description=(
+            "WAJIB -- external_code Customer di eSuite yang mau dihapus "
+            "mapping branch+salesman-nya, comma-separated. Diterima APA "
+            "ADANYA (TIDAK divalidasi format)."
+        ),
+    ),
+):
+    """
+    Hapus/kosongkan mapping Branch DAN Salesman dari Customer SEKALIGUS
+    (sales.branchs[] & sales.salesmans[] dikirim array kosong) -- kebalikan
+    dari POST /mapping/customer-sales.
+
+    TIDAK ADA opsi unmap branch/salesman secara terpisah -- info dev eSuite
+    (22 Agustus 2026): branchs & salesmans di dalam object `sales` saling
+    ikut ke-reset kalau salah satu di-set tanpa yang lain, jadi mengosongkan
+    salah satu otomatis mengosongkan keduanya. Field Customer lain
+    (name/addresses/invoice/dst) TIDAK ikut dikirim/direset.
+    """
+    return service.unmap_from_sales(external_codes=external_codes)
