@@ -447,6 +447,17 @@ class OdooClient:
         volume Customer bisa ribuan -- N+1 query per customer terlalu mahal,
         beda dari Branch yang cuma ~3 record. Lihat
         customer_sync_service.py::_to_esuite_address().
+
+        property_product_pricelist (26 Agustus 2026, DIAGNOSTIC-ONLY, TIDAK
+        dipakai _to_esuite_payload() -- lihat customer_sync_service.py, field
+        di sana di-assign eksplisit key-by-key jadi field baru ini otomatis
+        AMAN, tidak ikut ke-push kemana-mana sampai memang ditambahkan).
+        Field standar Odoo (many2one ke product.pricelist) -- kandidat SSOT
+        buat Customer -> Pricelist mapping (Task #4, PDF 9.8) yang lebih
+        reliable daripada mapping manual/parsing nama pricelist. Ditambahkan
+        supaya bisa dicek dulu lewat GET /odoo/customer apakah field ini
+        ke-populate di instance Odoo CBU (mis. utk outlet PEPITO) sebelum
+        diputuskan mau dipakai buat automasi mapping atau tidak.
         """
         conditions = [("customer_rank", ">", 0), ("active", "=", True)]
         if ids:
@@ -461,6 +472,7 @@ class OdooClient:
                 "fields": [
                     "id", "name", "company_type", "phone", "email",
                     "street", "partner_latitude", "partner_longitude",
+                    "property_product_pricelist",
                 ]
             },
         )
@@ -569,6 +581,12 @@ class OdooClient:
                 # dikirim ke eSuite -- bisa dicek dulu lewat Swagger sebelum
                 # sync, tanpa perlu panggil endpoint terpisah.
                 "street", "partner_latitude", "partner_longitude",
+                # property_product_pricelist -- SAMA dengan get_customers()
+                # (26 Agustus 2026, diagnostic-only, lihat docstring di sana
+                # untuk alasan lengkap). Diikutkan di sini juga supaya
+                # GET /odoo/customer & /odoo/contact langsung kelihatan
+                # pricelist assignment Odoo tanpa panggil endpoint lain.
+                "property_product_pricelist",
             ],
         }
         if limit:
