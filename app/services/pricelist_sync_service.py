@@ -21,6 +21,34 @@ PRODUCT_EXTERNAL_CODE_PREFIX = "ODOO-PROD-"
 # branch_sync_service.py ("ODOO-COMPANY-{id}").
 COMPANY_EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
 
+# Customer Group "All Customer Group" (external_code "All") -- FIX 26 Agustus
+# 2026, lihat docstring kelas. Constant FIXED (pola sama CURRENCY di atas),
+# BUKAN di-resolve per pricelist -- Odoo tidak punya sumber data customer
+# group per pricelist (assignment harga per-toko yang sebenarnya tetap lewat
+# price_list.id di Customer, lihat sales_entities_gap.md), jadi SEMUA
+# pricelist kirim grup catch-all yang sama ini (dari sample sukses vendor).
+CUSTOMER_GROUP_ALL = {
+    "id": "6a890e1ad5d77369eccac407",
+    "name": "All Customer Group",
+    "external_code": "All",
+}
+
+# effective_date -- FIX 26 Agustus 2026, lihat docstring kelas. FIXED
+# (start_date/end_date = 0, artinya "tidak ada batas tanggal", sama seperti
+# contoh sukses vendor & sama seperti record dibuat manual via UI eSuite
+# yang dicek 26 Agustus/pricelist_progress.md) -- item Odoo tetap punya
+# date_start/date_end sendiri per baris, field header ini cuma placeholder
+# struktur yang WAJIB ADA (bukan berarti ada 1 tanggal berlaku per pricelist).
+EFFECTIVE_DATE_DEFAULT = {"timezone": "Asia/Jakarta", "start_date": 0, "end_date": 0}
+
+# sales_channel -- FIX 26 Agustus 2026, DIINSTRUKSIKAN LANGSUNG user (BUKAN
+# dari sample dev yang isinya placeholder id/name kosong "" -- itu sengaja
+# TIDAK dipakai). id/name ini = channel "esuite" itu sendiri, dari master
+# data eSuite (GET /sales-channel, belum ada endpoint diagnostic-nya di
+# bridge ini). FIXED constant sama seperti CUSTOMER_GROUP_ALL/CURRENCY --
+# Odoo tidak punya sumber data sales_channel per pricelist.
+SALES_CHANNEL_DEFAULT = [{"id": "6a695cc1917e8fc836359461", "name": "esuite"}]
+
 # Default batch_size KALAU tidak diisi -- None (1 batch = semua pricelist
 # sekaligus), pola sama product_sync_service.py/stock_sync_service.py.
 DEFAULT_BATCH_SIZE = None
@@ -50,22 +78,63 @@ class PricelistSyncService:
     ?pricelist_id=2293 -> {"product_id": false, "product_tmpl_id": [17854, ...],
     "compute_price": "fixed", "fixed_price": 9009}.
 
-    KEPUTUSAN DESAIN (lihat pricelist_progress.md utk analisa lengkap):
-    - `customer_group[]` SENGAJA TIDAK dikirim di v1 ini. Kesimpulan riset
-      17 Agustus: assignment harga per-toko yang SEBENARNYA jalan lewat
-      field `price_list.id` di entity Customer (pekerjaan terpisah, belum
-      dibangun -- lihat sales_entities_gap.md), BUKAN lewat customer_group[]
-      yang sifatnya grouping generik. Kalau nanti user tetap mau kirim
-      customer_group[] sebagai fallback broad scope, tinggal tambah field
-      ini (additive) -- external_code yang sudah ada:
-      CBU-CUSTGROUP-FS/MT/GT/HORECA (lihat customer_group_sync_service.py).
+    🆕🆕 FIX 26 Agustus 2026 -- root cause dugaan kuat kenapa push via webhook
+    sering gagal/tidak kelihatan hasilnya (user report: "sync pricelist often
+    failed, webhook eSuite juga failed, cuma UI yang berhasil"). Dev vendor
+    kirim 1 sample payload TERKONFIRMASI SUKSES lewat Postman webhook
+    (`external_code: "WH-PL-POSTMAN-01"`) -- dibandingkan dgn payload kita,
+    ada beberapa perbedaan struktur:
+    1. **Key nested produk itu `"products"` (JAMAK), BUKAN `"product"`**
+       (tunggal) seperti yang selama ini kita kirim & seperti yang tertulis
+       di skema PDF section 9.13 (skema PDF ini SEKARANG terbukti stale/salah,
+       konsisten dgn precedent lain di project ini -- lihat
+       feedback_source_of_truth_hierarchy.md: live/dev-confirmed sample >
+       PDF statis). **Ini KEMUNGKINAN BESAR penyebab utama** kegagalan:
+       key yang salah nama kemungkinan diterima eSuite sebagai field asing
+       (di-skip diam-diam) -- response tetap HTTP 200 "success" (record
+       pricelist-nya sendiri tetap ke-create/update), TAPI products[]-nya
+       kosong sama sekali di eSuite -- persis pola "200 OK tapi silent fail"
+       yang sudah beberapa kali ditemukan di entity lain project ini.
+    2. `products[]`/`variant[]` di sample sukses ikut isi `name`/`sku`/
+       `external_code` (level produk) & `name` (level variant) -- SEBELUMNYA
+       cuma `id`. `branch[]` ikut isi `name` -- SEBELUMNYA cuma `id`.
+    3. `customer_group[]`/`effective_date`/`sales_channel[]` SEBELUMNYA
+       sengaja tidak dikirim (lihat versi lama catatan ini di bawah) --
+       **DIREVISI 26 Agustus 2026 atas instruksi eksplisit user**: semua
+       field yang ada di sample/struktur ini WAJIB dikirim. `customer_group[]`
+       & `effective_date` pakai FIXED constant (`CUSTOMER_GROUP_ALL`,
+       `EFFECTIVE_DATE_DEFAULT` -- Odoo tidak punya sumber data buat
+       differensiasi per pricelist, sama alasan seperti CURRENCY).
+       `sales_channel[]` (`SALES_CHANNEL_DEFAULT`) NILAINYA BUKAN dari sample
+       dev (yang isinya placeholder `id`/`name` kosong `""`) tapi dari
+       instruksi eksplisit user (channel "esuite", id
+       `6a695cc1917e8fc836359461`).
+    4. **BELUM ditest live** -- perubahan ini urgent (user report kegagalan
+       berulang) makanya langsung diterapkan, TAPI wajib divalidasi dgn 1-2
+       pricelist dulu (param `ids`) + cek visual UI eSuite, sebelum full push
+       ulang ke semua pricelist yang sudah pernah "berhasil" (200) versi lama
+       -- kemungkinan perlu re-push ulang supaya products[]-nya benar-benar
+       terisi (bukan cuma diam2 diabaikan seperti dugaan di atas).
+
+    KEPUTUSAN DESAIN LAMA (SEBAGIAN SUDAH DIREVISI, lihat FIX 26 Agustus di
+    atas -- riwayat dipertahankan buat konteks, lihat pricelist_progress.md
+    utk analisa lengkap):
+    - ~~`customer_group[]` SENGAJA TIDAK dikirim di v1 ini~~ -- DIREVISI,
+      sekarang SELALU dikirim (`CUSTOMER_GROUP_ALL`, lihat FIX 26 Agustus).
+      Kesimpulan riset 17 Agustus (assignment harga per-toko yang SEBENARNYA
+      tetap lewat field `price_list.id` di Customer, lihat sales_entities_gap.md)
+      TETAP BERLAKU -- customer_group[] di sini cuma grup catch-all generik,
+      BUKAN pengganti mapping price_list.id per customer.
     - `product[].key` (ULID di contoh PDF) SENGAJA DIKOSONGKAN/tidak dikirim
       -- tidak ada di daftar "Required fields" resmi (cuma external_code &
       name yang wajib), dan tidak ada sumber data Odoo yang jelas untuk ini.
-    - `effective_date` SENGAJA TIDAK dikirim -- tiap item punya date_start/
-      date_end sendiri-sendiri (bukan 1 range per pricelist), jadi tidak ada
-      1 angka header yang akurat mewakili semua item. Field ini juga tidak
-      ada di "Required fields" resmi.
+      Field ini TIDAK muncul di sample sukses dev juga -- konsisten, tetap
+      tidak dikirim.
+    - ~~`effective_date` SENGAJA TIDAK dikirim~~ -- DIREVISI, sekarang SELALU
+      dikirim (`EFFECTIVE_DATE_DEFAULT`, lihat FIX 26 Agustus). Alasan lama
+      (tiap item Odoo punya date_start/date_end sendiri, tidak ada 1 range
+      akurat per pricelist) TETAP BERLAKU -- makanya value yang dikirim FIXED
+      "tidak ada batas tanggal" (start/end = 0), bukan hasil hitung dari item.
     - Hanya item dengan `compute_price="fixed"` yang didukung (lihat
       _compute_item_price()) -- match 100% dengan contoh nyata user
       (screenshot tab "Prices", semua baris "Fixed Price"). Item lain
@@ -192,12 +261,22 @@ class PricelistSyncService:
                 if not resolved:
                     continue
                 store_price = row["price"]
+                # name/sku/external_code (26 Agustus 2026, FIX) -- lihat
+                # docstring kelas bagian "FIX 26 Agustus" utk alasan lengkap.
+                # "sku" dikosongkan (""), KONSISTEN dgn convention Product
+                # entity sendiri (product_sync_service.py::_to_esuite_payload()
+                # juga selalu kirim variants[].sku = "" -- Odoo CBU memang
+                # tidak punya SKU terpisah dari internal id).
                 product_entries.append(
                     {
                         "id": resolved["product_id"],
+                        "name": resolved["name"],
+                        "sku": "",
+                        "external_code": resolved["external_code"],
                         "variant": [
                             {
                                 "id": resolved["variant_id"],
+                                "name": resolved["name"],
                                 "base_price": 0,
                                 "store_price": store_price,
                             }
@@ -216,9 +295,11 @@ class PricelistSyncService:
             branch_entries = []
             if pl.get("company_id"):
                 company_code = f"{COMPANY_EXTERNAL_CODE_PREFIX}{pl['company_id'][0]}"
-                esuite_branch_id = esuite_branches.get(company_code)
-                if esuite_branch_id:
-                    branch_entries = [{"id": esuite_branch_id}]
+                esuite_branch = esuite_branches.get(company_code)
+                if esuite_branch:
+                    # "name" (26 Agustus 2026, FIX) -- ikut dikirim, bukan
+                    # cuma "id" -- lihat docstring kelas.
+                    branch_entries = [{"id": esuite_branch["id"], "name": esuite_branch["name"]}]
                 else:
                     branch_unresolved.append(f"{EXTERNAL_CODE_PREFIX}{pl['id']}")
 
@@ -479,9 +560,16 @@ class PricelistSyncService:
                     continue
                 for variant in record.get("variants") or []:
                     if variant.get("external_code") == code and variant.get("id"):
+                        # "name"/"external_code" (26 Agustus 2026) -- ikut
+                        # disimpan dari record yang SAMA (tidak ada RPC/pull
+                        # tambahan) supaya bisa diisi ke product[].name/sku/
+                        # external_code di payload -- lihat FIX di sync()
+                        # bagian bawah, alasan lengkap di docstring kelas.
                         result[odoo_id] = {
                             "product_id": record["id"],
                             "variant_id": variant["id"],
+                            "name": record.get("name") or "",
+                            "external_code": code,
                         }
                         break
 
@@ -517,13 +605,17 @@ class PricelistSyncService:
 
         CATATAN: field "id" top-level dokumen /branches SUDAH dikonfirmasi
         reliable (terisi persis, tidak kosong) dari live check di atas.
+        "name" (26 Agustus 2026, FIX) -- ikut disimpan dari record yang SAMA
+        (top-level "name", sama field yang dikirim branch_sync_service.py
+        line ~133) supaya branch[] di payload Pricelist bisa isi "name" juga,
+        bukan cuma "id" -- lihat docstring kelas bagian "FIX 26 Agustus".
 
         Kalau company (mis. "Sunshine Agri Pratama") tidak ketemu di eSuite
         sama sekali (belum pernah dipush krn di luar IN_SCOPE_COMPANY_NAMES,
         lihat docstring kelas), code-nya otomatis tidak ada di dict hasil --
         caller (sync()) treat sebagai branch_unresolved, BUKAN error fatal.
 
-        Return: {external_code: esuite_branch_id}
+        Return: {external_code: {"id": ..., "name": ...}}
         """
         if not company_ids:
             return {}
@@ -537,7 +629,7 @@ class PricelistSyncService:
             for record in pulled.get("data") or []:
                 code = (record.get("basic_info") or {}).get("external_code")
                 if code in codes_wanted and record.get("id") and code not in result:
-                    result[code] = record["id"]
+                    result[code] = {"id": record["id"], "name": record.get("name") or ""}
 
             meta = pulled.get("meta") or {}
             total_page = meta.get("total_page", 1)
@@ -593,12 +685,23 @@ class PricelistSyncService:
 
     @staticmethod
     def _to_esuite_payload(pricelist: dict, product_entries: list, branch_entries: list) -> dict:
+        # FIX 26 Agustus 2026 -- lihat docstring kelas bagian "FIX 26 Agustus"
+        # untuk root cause & alasan lengkap tiap perubahan di bawah:
+        # 1. key "product" -> "products" (PALING KRITIS -- root cause dugaan
+        #    kuat kenapa sync via webhook sering gagal/silent-empty walau
+        #    response 200, sementara create manual via UI selalu berhasil).
+        # 2. customer_group[]/effective_date/sales_channel[] SEKARANG ikut
+        #    dikirim (SEBELUMNYA sengaja tidak dikirim, keputusan 18 Agustus)
+        #    -- DIREVISI atas instruksi eksplisit user 26 Agustus 2026: semua
+        #    field ini WAJIB dikirim, konsisten dgn sample sukses dari dev.
         return {
             "external_code": f"{EXTERNAL_CODE_PREFIX}{pricelist['id']}",
             "name": pricelist["name"],
             "status": "active" if pricelist.get("active", True) else "inactive",
             "currency": CURRENCY,
-            "product": product_entries,
+            "effective_date": EFFECTIVE_DATE_DEFAULT,
+            "customer_group": [CUSTOMER_GROUP_ALL],
             "branch": branch_entries,
-            # customer_group -- SENGAJA tidak dikirim, lihat docstring kelas.
+            "sales_channel": SALES_CHANNEL_DEFAULT,
+            "products": product_entries,
         }

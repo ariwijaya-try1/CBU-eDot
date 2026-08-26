@@ -39,3 +39,4 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-25T10:23:20.966360+00:00,pricelist,upsert,,1,0,1,success,,
 2026-08-26T00:34:16.554033+00:00,product,upsert,1243,2,0,1,success,,
 2026-08-26T01:02:52.022247+00:00,customer,upsert,4,4,0,1,success,,
+2026-08-26T06:11:23.495432+00:00,pricelist,upsert,,1,0,1,success,,
