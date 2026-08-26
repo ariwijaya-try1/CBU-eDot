@@ -186,21 +186,49 @@ def get_odoo_pricelist(
 @router.get("/odoo/pricelist-item")
 def get_odoo_pricelist_item(
     pricelist_id: int | None = Query(default=None, description="OPSIONAL -- filter baris harga milik 1 pricelist_id tertentu (lihat GET /odoo/pricelist)."),
-    product_id: int | None = Query(default=None, description="OPSIONAL -- filter baris harga milik 1 product.product id tertentu (setara tab 'Prices' di form produk Odoo -- lihat semua pricelist yang punya harga utk produk ini)."),
+    product_id: int | None = Query(default=None, description="OPSIONAL -- filter ke field product_id product.pricelist.item. CATATAN (25 Agustus 2026): untuk data CBU field ini HAMPIR SELALU KOSONG (item selalu pakai product_tmpl_id, bukan product_id) -- pakai parameter product_tmpl_id di bawah untuk cari pricelist per produk."),
+    product_tmpl_id: int | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL (25 Agustus 2026) -- filter baris harga milik 1 "
+            "product_tmpl_id tertentu. INI YANG SEHARUSNYA DIPAKAI (bukan "
+            "product_id di atas) buat cari 'pricelist mana saja yang memuat "
+            "produk X' -- item Odoo CBU selalu isi product_tmpl_id, bukan "
+            "product_id (lihat FIX 18 Agustus di [[pricelist_progress]]). "
+            "Ambil product_tmpl_id dari GET /odoo/product (field "
+            "product_tmpl_id, ditambahkan di response 25 Agustus). Hasil "
+            "baris di sini punya field 'pricelist_id' -- kumpulkan semua id "
+            "unik-nya lalu push manual lewat POST /sync/pricelist?ids=<id1,id2,...>."
+        ),
+    ),
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
 ):
     """
     GET mentah product.pricelist.item (baris aturan harga per produk/
-    kategori dalam 1 Pricelist) dari Odoo 19. Kosongkan pricelist_id/product_id
-    untuk lihat semua baris (semua pricelist tercampur) -- isi pricelist_id
-    (dari GET /odoo/pricelist) untuk drill-down 1 pricelist tertentu, atau isi
-    product_id (dari GET /odoo/product) untuk lihat semua harga 1 produk lintas
-    pricelist (mis. harga produk X di pricelist Tiktok vs pricelist Coco Mart)
-    -- bisa diisi keduanya sekaligus (AND).
+    kategori dalam 1 Pricelist) dari Odoo 19. Kosongkan semua filter untuk
+    lihat semua baris (semua pricelist tercampur) -- isi pricelist_id (dari
+    GET /odoo/pricelist) untuk drill-down 1 pricelist tertentu, atau isi
+    product_tmpl_id (dari GET /odoo/product) untuk lihat semua harga 1
+    produk lintas pricelist (mis. harga produk X di pricelist Tiktok vs
+    pricelist Coco Mart) -- bisa dikombinasikan (AND).
+
+    Cara push manual SEMUA pricelist untuk 1 produk/variant (25 Agustus
+    2026, lihat [[pricelist_progress]]):
+    1. GET /odoo/product?name=<nama produk> -- catat id & product_tmpl_id.
+    2. POST /sync/product?product_id=<id> -- pastikan produk sudah ada di eSuite.
+    3. GET /odoo/pricelist-item?product_tmpl_id=<product_tmpl_id> -- catat
+       SEMUA nilai pricelist_id yang muncul (unik).
+    4. POST /sync/pricelist?ids=<pricelist_id1,pricelist_id2,...> -- push
+       HANYA pricelist yang memuat produk itu, bukan full 316 pricelist.
 
     BELUM DIVALIDASI -- lihat odoo_client.py::get_pricelist_items().
     """
-    return odoo.get_pricelist_items(pricelist_id=pricelist_id, product_id=product_id, limit=limit)
+    return odoo.get_pricelist_items(
+        pricelist_id=pricelist_id,
+        product_id=product_id,
+        product_tmpl_id=product_tmpl_id,
+        limit=limit,
+    )
 
 
 @router.get("/odoo/stock-fraction")

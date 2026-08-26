@@ -488,7 +488,17 @@ class OdooClient:
         kwargs = {
             "fields": [
                 "id", "name", "default_code", "categ_id", "list_price",
+                # "product_tmpl_id" -- DITAMBAHKAN 25 Agustus 2026, additif
+                # (field baru di response, tidak ubah field lain). Dibutuhkan
+                # supaya bisa cari pricelist yang memuat 1 produk tertentu:
+                # product.pricelist.item Odoo CBU SELALU pakai product_tmpl_id
+                # (bukan product_id, lihat FIX 18 Agustus di
+                # get_product_ids_by_template_ids()) -- jadi GET /odoo/product
+                # perlu ikut tampilkan id template-nya, dipakai sebagai filter
+                # GET /odoo/pricelist-item?product_tmpl_id=... (lihat method
+                # get_pricelist_items() di bawah).
                 "standard_price", "qty_available", "free_qty", "uom_id", "active",
+                "product_tmpl_id",
             ],
         }
         if limit:
@@ -672,6 +682,7 @@ class OdooClient:
         pricelist_id: int | None = None,
         pricelist_ids: list[int] | None = None,
         product_id: int | None = None,
+        product_tmpl_id: int | None = None,
         limit: int | None = None,
     ):
         """
@@ -679,24 +690,18 @@ class OdooClient:
         kategori dalam 1 Pricelist) -- dipakai GET /odoo/pricelist-item.
         Pelengkap get_pricelists(): header dulu (nama pricelist), baru
         drill-down ke item lewat pricelist_id (dari field item_ids di
-        get_pricelists()) ATAU lewat product_id (17 Agustus 2026, ditambahkan
-        setelah user tunjukkan tab "Prices" di form produk Odoo -- 1 produk
-        bisa muncul di BANYAK pricelist sekaligus dengan fixed_price beda-beda
-        per toko/customer/channel, jadi query per-produk juga relevan, bukan
-        cuma per-pricelist).
+        get_pricelists()) ATAU lewat product_id/product_tmpl_id (17-25
+        Agustus 2026, lihat REVISI di bawah -- 1 produk bisa muncul di BANYAK
+        pricelist sekaligus dengan fixed_price beda-beda per toko/customer/
+        channel, jadi query per-produk juga relevan, bukan cuma per-pricelist).
 
-        BELUM DIVALIDASI -- field dipilih dari model standar Odoo
+        BELUM DIVALIDASI SEPENUHNYA -- field dipilih dari model standar Odoo
         (`product.pricelist.item`): applied_on menentukan scope baris (produk
         spesifik/varian/kategori/semua produk), compute_price menentukan cara
         hitung harga (fixed/percentage/formula), fixed_price dipakai kalau
-        compute_price="fixed". product_id difilter ke field `product_id`
-        (product.product -- konsisten dengan konvensi project ini yang selalu
-        pakai product.product sebagai "variant", BUKAN product_tmpl_id) --
-        ASUMSI, kalau tab "Prices" Odoo ternyata pakai product_tmpl_id bukan
-        product_id, filter ini perlu disesuaikan (kabari hasilnya kalau
-        product_id=<id valid> tapi hasilnya selalu kosong).
-        Sama seperti get_pricelists(), kabari kalau ada error RPC
-        field-not-found -- field yang salah tinggal diganti di sini.
+        compute_price="fixed". Sama seperti get_pricelists(), kabari kalau
+        ada error RPC field-not-found -- field yang salah tinggal diganti
+        di sini.
 
         REVISI 18 Agustus 2026 -- parameter `pricelist_ids` (list, JAMAK)
         DITAMBAHKAN, dipakai pricelist_sync_service.py buat ambil SEMUA item
@@ -707,6 +712,21 @@ class OdooClient:
         drill-down 1 pricelist) TETAP DIPERTAHANKAN APA ADANYA -- tidak ada
         breaking change ke behavior lama. Kalau KEDUANYA diisi, `pricelist_ids`
         yang menang (lebih spesifik/bulk).
+
+        REVISI 25 Agustus 2026 -- parameter `product_tmpl_id` DITAMBAHKAN.
+        `product_id` (filter ke field `product_id` product.pricelist.item)
+        yang lama TERBUKTI hampir selalu KOSONG hasilnya untuk data CBU --
+        root cause SUDAH DIKONFIRMASI 18 Agustus (lihat FIX #1 di
+        pricelist_sync_service.py & get_product_ids_by_template_ids()): SEMUA
+        item Odoo CBU pakai applied_on="1_product", yaitu field
+        `product_tmpl_id` yang TERISI, `product_id` KOSONG/false. Jadi filter
+        `product_id` lama HAMPIR TIDAK PERNAH match apa pun di data nyata --
+        `product_tmpl_id` inilah yang seharusnya dipakai buat cari "pricelist
+        mana saja yang memuat produk X" (dipakai user buat push manual
+        pricelist utk 1 produk tertentu, lihat GET /odoo/product yang sekarang
+        ikut tampilkan `product_tmpl_id`, [[pricelist_progress]]). `product_id`
+        TIDAK dihapus (masih diterima apa adanya, cuma jarang berguna sendiri)
+        -- kalau keduanya diisi, dikombinasikan AND (jarang perlu keduanya).
         """
         conditions = []
         if pricelist_ids:
@@ -715,6 +735,8 @@ class OdooClient:
             conditions.append(("pricelist_id", "=", pricelist_id))
         if product_id:
             conditions.append(("product_id", "=", product_id))
+        if product_tmpl_id:
+            conditions.append(("product_tmpl_id", "=", product_tmpl_id))
         domain = [conditions] if conditions else [[]]
 
         kwargs = {

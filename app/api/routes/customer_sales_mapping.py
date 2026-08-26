@@ -88,11 +88,28 @@ def unmap_customer_sales(
             "ADANYA (TIDAK divalidasi format)."
         ),
     ),
+    clear_value: str = Query(
+        default="null",
+        pattern="^(null|empty_array)$",
+        description=(
+            "DIAGNOSTIK (25 Agustus 2026) -- cara mengosongkan "
+            "branchs/salesmans di payload: 'null' (default, best-guess baru "
+            "krn array kosong '[]' TERBUKTI diabaikan eSuite -- lihat RALAT "
+            "di service) atau 'empty_array' (perilaku lama, buat "
+            "dibandingkan). Ganti-ganti nilai ini utk cari tau mana yang "
+            "beneran jalan, TANPA perlu ubah kode."
+        ),
+    ),
 ):
     """
-    Hapus/kosongkan mapping Branch DAN Salesman dari Customer SEKALIGUS
-    (sales.branchs[] & sales.salesmans[] dikirim array kosong) -- kebalikan
-    dari POST /mapping/customer-sales.
+    Hapus/kosongkan mapping Branch DAN Salesman dari Customer SEKALIGUS --
+    kebalikan dari POST /mapping/customer-sales.
+
+    RALAT 25 Agustus 2026 (temuan testing user): kirim array kosong
+    (`sales.branchs: []`/`sales.salesmans: []`) TERNYATA diabaikan eSuite
+    (diperlakukan sama seperti field tidak dikirim -- mapping lama TETAP
+    ada). Default sekarang kirim `null`, BELUM dikonfirmasi vendor pasti
+    berhasil -- gunakan `clear_value` utk test cepat lewat Swagger.
 
     TIDAK ADA opsi unmap branch/salesman secara terpisah -- info dev eSuite
     (22 Agustus 2026): branchs & salesmans di dalam object `sales` saling
@@ -100,4 +117,4 @@ def unmap_customer_sales(
     salah satu otomatis mengosongkan keduanya. Field Customer lain
     (name/addresses/invoice/dst) TIDAK ikut dikirim/direset.
     """
-    return service.unmap_from_sales(external_codes=external_codes)
+    return service.unmap_from_sales(external_codes=external_codes, clear_value=clear_value)

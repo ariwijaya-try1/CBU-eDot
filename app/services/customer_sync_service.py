@@ -1,3 +1,5 @@
+import re
+
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import AppError, ValidationError
@@ -215,6 +217,17 @@ class CustomerSyncService:
             ids.append(int(id_part))
         return ids
 
+    @staticmethod
+    def _only_digits(value: str | bool | None) -> str:
+        """
+        Buang semua karakter selain angka (spasi/+/-/kurung/dst) -- instruksi
+        user 25 Agustus 2026: eSuite terima phone ANGKA SAJA. Odoo balikin
+        `False` untuk char field kosong (bukan None/"") -- `value or ""`
+        menormalkan itu dulu sebelum regex, pola sama dengan `or ""` yang
+        sudah dipakai di field phone/email lain (lihat _to_esuite_payload()).
+        """
+        return re.sub(r"\D", "", value or "")
+
     def _resolve_customer_type(self, company_type: str) -> str:
         mapped = CUSTOMER_TYPE_MAPPING.get(company_type)
         if not mapped:
@@ -261,7 +274,12 @@ class CustomerSyncService:
             # dihapus dari Contacts di Odoo 19 (di-merge ke `phone`,
             # dikonfirmasi user). Tidak ada sumber data Odoo lagi untuk field
             # ini, jadi tidak dikirim ke eSuite -- lihat odoo_client.py::get_customers().
-            "phone": customer.get("phone") or "",
+            # phone -- REVISI 25 Agustus 2026 (instruksi user): kirim ANGKA
+            # SAJA ke eSuite (tanpa spasi/+/-), mis. data Odoo "+62 812-3456"
+            # -> "628123456". Format asli Odoo bebas (user isi manual), jadi
+            # dibersihkan di sini (bukan di Odoo) supaya konsisten & aman
+            # walau nomor ditulis format apapun. Lihat _only_digits().
+            "phone": self._only_digits(customer.get("phone")),
             "email": customer.get("email") or "",
             # addresses -- ditambahkan 24 Agustus 2026 atas instruksi user,
             # lihat _to_esuite_address() untuk detail field & keputusan

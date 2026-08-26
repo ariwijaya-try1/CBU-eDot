@@ -32,3 +32,10 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-25T01:05:51.839912+00:00,customer,upsert,2976,5,0,1,success,,
 2026-08-25T01:41:20.001270+00:00,customer,upsert,2976,5,0,1,success,,
 2026-08-25T02:06:42.231392+00:00,customer,upsert,1,1,0,1,success,,
+2026-08-25T09:31:48.187034+00:00,pricelist,upsert,,59,0,1,success,,257 pricelist di-skip (belum ada produk valid di eSuite)
+2026-08-25T09:50:27.468006+00:00,pricelist,upsert,,59,0,1,success,,257 pricelist di-skip (belum ada produk valid di eSuite)
+2026-08-25T10:18:48.795472+00:00,product,upsert,1,1,0,1,success,,
+2026-08-25T10:21:26.297235+00:00,pricelist,upsert,,1,0,1,success,,
+2026-08-25T10:23:20.966360+00:00,pricelist,upsert,,1,0,1,success,,
+2026-08-26T00:34:16.554033+00:00,product,upsert,1243,2,0,1,success,,
+2026-08-26T01:02:52.022247+00:00,customer,upsert,4,4,0,1,success,,

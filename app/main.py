@@ -9,6 +9,7 @@ from app.api.routes.customer import router as customer_router, deactivate_router
 from app.api.routes.customer_group import router as customer_group_router
 from app.api.routes.customer_grouping import router as customer_grouping_router
 from app.api.routes.customer_sales_mapping import router as customer_sales_mapping_router, unmap_router as customer_sales_unmap_router
+from app.api.routes.customer_pricelist_mapping import router as customer_pricelist_mapping_router
 from app.api.routes.stock_matrix import router as stock_matrix_router
 from app.api.routes.pricelist import router as pricelist_router
 from app.api.routes.salesman_division import router as salesman_division_router, deactivate_router as salesman_division_deactivate_router
@@ -61,6 +62,7 @@ app.include_router(customer_deactivate_router, prefix="/api", tags=["Deactivate"
 app.include_router(customer_group_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_grouping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_pricelist_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_sales_unmap_router, prefix="/api", tags=["Un-Map"])
 app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])
 app.include_router(pricelist_router, prefix="/api", tags=["Sync"])

@@ -134,28 +134,54 @@ class CustomerSalesMappingService:
             "esuite_response": esuite_result,
         }
 
-    def unmap_from_sales(self, external_codes: str) -> dict:
+    def unmap_from_sales(self, external_codes: str, clear_value: str = "null") -> dict:
         """
-        Hapus mapping Branch DAN Salesman dari Customer SEKALIGUS -- kirim
-        `sales.branchs: []` & `sales.salesmans: []` (array kosong, BUKAN
-        field dihilangkan). Kebalikan dari map_to_sales(), pakai root cause
-        YANG SAMA (info dev eSuite, 22 Agustus 2026): branchs & salesmans di
-        dalam object `sales` saling ikut ke-reset kalau salah satu di-set
-        tanpa yang lain -- jadi mengosongkan salah satu otomatis
-        mengosongkan yang lain juga. TIDAK ADA cara unmap branch/salesman
-        secara terpisah (batasan yang sama dengan map_to_sales(), bukan
-        keterbatasan baru).
+        Hapus mapping Branch DAN Salesman dari Customer SEKALIGUS. Kebalikan
+        dari map_to_sales(), pakai root cause YANG SAMA (info dev eSuite, 22
+        Agustus 2026): branchs & salesmans di dalam object `sales` saling
+        ikut ke-reset kalau salah satu di-set tanpa yang lain -- jadi
+        mengosongkan salah satu otomatis mengosongkan yang lain juga. TIDAK
+        ADA cara unmap branch/salesman secara terpisah (batasan yang sama
+        dengan map_to_sales(), bukan keterbatasan baru).
+
+        RALAT 25 Agustus 2026 (dikoreksi user -- BUKAN dari vendor, temuan
+        testing user sendiri): versi awal kirim `sales.branchs: []` &
+        `sales.salesmans: []` (array kosong) -- TERNYATA eSuite
+        memperlakukan array kosong itu SAMA SEPERTI field tidak dikirim sama
+        sekali (partial-merge tidak ke-trigger, data lama TETAP ada). Dugaan
+        kuat: backend eSuite pakai truthy-check ("kalau array kosong,
+        skip") -- konsisten dengan overall behavior partial-merge yang
+        sudah dikonfirmasi user di endpoint lain (field yang TIDAK dikirim
+        = TIDAK berubah, mis. `phone` aman kalau mapping cuma kirim `sales`).
+
+        Ganti default jadi kirim `null` (bukan `[]`) -- konvensi umum
+        JSON merge-patch: `null` = "hapus/kosongkan field ini", beda makna
+        dari array kosong. **BELUM ada konfirmasi vendor bahwa `null` ini
+        pasti jalan** -- ini best-guess berdasarkan konvensi umum, BUKAN
+        instruksi eSuite. Makanya param `clear_value` disediakan supaya bisa
+        di-toggle & ditest langsung dari Swagger tanpa ubah kode lagi kalau
+        `null` ternyata juga tidak berefek -- kalau KEDUANYA (`null` & `[]`)
+        terbukti tidak jalan, itu kesimpulan kuat perlu tanya vendor
+        langsung cara resmi clear array field (kemungkinan API tidak
+        mendukung ini sama sekali).
 
         Field Customer lain (name/addresses/invoice/dst) TIDAK ikut
         dikirim/direset -- partial-merge tetap berlaku di level TOP payload,
-        cuma object `sales` yang diganti isinya jadi kosong.
+        cuma object `sales` yang diganti isinya.
         """
         codes = [c.strip() for c in external_codes.split(",") if c.strip()]
         if not codes:
             raise ValidationError("external_codes wajib diisi minimal 1")
 
+        if clear_value not in ("null", "empty_array"):
+            raise ValidationError(
+                "clear_value harus 'null' atau 'empty_array'",
+                details={"clear_value": clear_value},
+            )
+        empty = None if clear_value == "null" else []
+
         payload = [
-            {"external_code": code, "sales": {"branchs": [], "salesmans": []}}
+            {"external_code": code, "sales": {"branchs": empty, "salesmans": empty}}
             for code in codes
         ]
         esuite_result = self.esuite.push("customers", event="upsert", data=payload)
@@ -163,6 +189,7 @@ class CustomerSalesMappingService:
         return {
             "unmapped_count": len(payload),
             "external_codes": codes,
+            "clear_value": clear_value,
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
