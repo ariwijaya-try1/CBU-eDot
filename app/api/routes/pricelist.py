@@ -40,6 +40,20 @@ def sync_pricelist(
         default=False,
         description="OPSIONAL -- kalau True, response sertakan payload_sent penuh per batch. Default False.",
     ),
+    customer_group_external_code: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL (27 Agustus 2026, Phase 1) -- assign customer_group SPESIFIK "
+            "ke SEMUA pricelist yang diproses panggilan ini (mapping MANUAL, 1 nilai "
+            "per panggilan, pola sama customer_group_external_codes di "
+            "/api/mapping/customer-grouping). Customer Group ini WAJIB sudah dibuat "
+            "manual di UI eSuite (parent 'Customer Type') dengan external_code ini. "
+            "Kosongkan untuk fallback ke 'All Customer Group' (default lama) -- "
+            "PERHATIAN: banyak pricelist pakai 'All Customer Group' yang sama bisa "
+            "bikin pricelist saling tertimpa/tidak muncul di app, lihat "
+            "pricelist_progress.md."
+        ),
+    ),
 ):
     """
     Trigger manual sync Pricelist: Odoo (product.pricelist + product.pricelist.item)
@@ -65,4 +79,5 @@ def sync_pricelist(
         limit=limit,
         batch_size=batch_size,
         include_payload=include_payload,
+        customer_group_external_code=customer_group_external_code,
     )

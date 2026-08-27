@@ -179,6 +179,7 @@ class PricelistSyncService:
         limit: int | None = None,
         batch_size: int | None = None,
         include_payload: bool = False,
+        customer_group_external_code: str | None = None,
     ):
         # external_codes (21 Agustus 2026) -- ditambahkan buat konsisten
         # dengan entity lain (format "ODOO-PRICELIST-{id}"), TAPI param `ids`
@@ -249,6 +250,40 @@ class PricelistSyncService:
         company_ids = {pl["company_id"][0] for pl in pricelists if pl.get("company_id")}
         esuite_branches = self._resolve_branches(company_ids)
 
+        # customer_group_entries (27 Agustus 2026, Phase 1 -- lihat pricelist_progress.md
+        # section "KONFLIK SEBAGIAN DIPUTUSKAN 27 Agustus") -- SEBELUMNYA fixed
+        # CUSTOMER_GROUP_ALL utk SEMUA pricelist (26 Agustus), ternyata itu root
+        # cause bug "harga tertimpa" (banyak pricelist share customer_group sama
+        # -> saling override di app). SEKARANG opsional: kalau
+        # customer_group_external_code diisi (mapping MANUAL per panggilan, pola
+        # sama customer_grouping_endpoint), resolve id+name via GET /customergroup
+        # (customer group itu WAJIB sudah dibuat manual di eSuite UI dgn
+        # external_code terisi & parent "Customer Type", lihat dev_wa_notes.md
+        # Note #1). Kalau TIDAK diisi, fallback ke CUSTOMER_GROUP_ALL (default
+        # lama) -- supaya pricelist yang belum di-migrasi ke skema baru TIDAK
+        # breaking.
+        if customer_group_external_code:
+            found_groups = self.esuite.find_by_external_codes(
+                "customergroup", {customer_group_external_code}
+            )
+            resolved_group = found_groups.get(customer_group_external_code)
+            if not resolved_group:
+                raise ValidationError(
+                    "customer_group_external_code tidak ditemukan di eSuite -- "
+                    "pastikan Customer Group ini sudah dibuat manual di UI eSuite "
+                    "(parent 'Customer Type') dengan external_code yang sama persis",
+                    details={"customer_group_external_code": customer_group_external_code},
+                )
+            customer_group_entries = [
+                {
+                    "id": resolved_group.get("id", ""),
+                    "name": resolved_group.get("name") or "",
+                    "external_code": customer_group_external_code,
+                }
+            ]
+        else:
+            customer_group_entries = [CUSTOMER_GROUP_ALL]
+
         payload = []
         skipped_pricelist_no_valid_product = []
         branch_unresolved = []
@@ -303,7 +338,7 @@ class PricelistSyncService:
                 else:
                     branch_unresolved.append(f"{EXTERNAL_CODE_PREFIX}{pl['id']}")
 
-            payload.append(self._to_esuite_payload(pl, product_entries, branch_entries))
+            payload.append(self._to_esuite_payload(pl, product_entries, branch_entries, customer_group_entries))
 
         if not payload:
             raise ValidationError(
@@ -369,6 +404,7 @@ class PricelistSyncService:
             "products_not_in_esuite_count": len(products_not_in_esuite),
             "products_not_in_esuite_sample": products_not_in_esuite[:20],
             "branch_unresolved": branch_unresolved,
+            "customer_group_used": customer_group_entries,
             "batch_size": size,
             "batch_count": len(batches),
             "synced_count": synced_count,
@@ -684,7 +720,9 @@ class PricelistSyncService:
         return ids
 
     @staticmethod
-    def _to_esuite_payload(pricelist: dict, product_entries: list, branch_entries: list) -> dict:
+    def _to_esuite_payload(
+        pricelist: dict, product_entries: list, branch_entries: list, customer_group_entries: list
+    ) -> dict:
         # FIX 26 Agustus 2026 -- lihat docstring kelas bagian "FIX 26 Agustus"
         # untuk root cause & alasan lengkap tiap perubahan di bawah:
         # 1. key "product" -> "products" (PALING KRITIS -- root cause dugaan
@@ -700,7 +738,7 @@ class PricelistSyncService:
             "status": "active" if pricelist.get("active", True) else "inactive",
             "currency": CURRENCY,
             "effective_date": EFFECTIVE_DATE_DEFAULT,
-            "customer_group": [CUSTOMER_GROUP_ALL],
+            "customer_group": customer_group_entries,
             "branch": branch_entries,
             "sales_channel": SALES_CHANNEL_DEFAULT,
             "products": product_entries,
