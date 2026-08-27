@@ -47,3 +47,5 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-27T01:34:20.556976+00:00,customer,upsert,1,1,0,1,success,,
 2026-08-27T01:38:05.754721+00:00,customer,upsert,4,4,0,1,success,,
 2026-08-27T02:32:14.763470+00:00,customer,upsert,10,10,0,1,success,,
+2026-08-27T02:58:38.797279+00:00,customer,upsert,1,1,0,1,success,,
+2026-08-27T03:00:34.940662+00:00,customer,upsert,1,1,0,1,success,,

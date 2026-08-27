@@ -100,6 +100,12 @@ class OdooClient:
         ids (OPSIONAL, 21 Agustus 2026): filter tambahan "id in ids"
         (product.category id) -- dipakai buat upsert kategori tertentu saja
         lewat external_code. Kosongkan untuk behavior normal.
+
+        field "parent_id" (BARU, 27 Agustus 2026): dipakai OPSIONAL oleh
+        product_category_sync_service.py utk resolve hierarki "parent" ke
+        eSuite (fitur with_parent, default OFF -- lihat komentar di service
+        itu). Many2one Odoo standar, balik [id, display_name] atau False
+        kalau root (tidak punya parent).
         """
         conditions = [("complete_name", "ilike", "saleable")]
         if ids:
@@ -110,7 +116,7 @@ class OdooClient:
             "product.category",
             "search_read",
             domain,
-            {"fields": ["id", "name", "complete_name"]},
+            {"fields": ["id", "name", "complete_name", "parent_id"]},
         )
 
     def get_products(self, ids: list | None = None):

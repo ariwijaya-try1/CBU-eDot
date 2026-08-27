@@ -20,9 +20,34 @@ def sync_product_category(
         default=None,
         description="OPSIONAL -- diagnostik, kirim cuma N kategori pertama. Kosongkan untuk semua.",
     ),
+    with_parent: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL (BARU 27 Agustus 2026, default False) -- kalau True, "
+            "sekalian kirim field 'parent' (hierarki, mis. GROCERIES nested "
+            "di bawah SALEABLE/OTHER) ke eSuite, bukan cuma nama kategori "
+            "flat. Default OFF supaya behavior existing (dipakai automation "
+            "lain) tidak berubah -- lihat komentar lengkap di service. "
+            "Disarankan test dulu ke subset kecil pakai bareng "
+            "'external_codes' sebelum jalanin ke semua kategori."
+        ),
+    ),
 ):
     """
     Trigger manual sync Product Category: Odoo (product.category) -> eSuite.
-    Catatan: hierarki (parent) sengaja belum dikirim, lihat komentar di service.
+
+    Default (with_parent=False): kirim nama kategori LEAF saja, flat --
+    behavior ASLI, tidak berubah.
+
+    with_parent=True: tambahan fase ke-2 -- resolve & kirim field 'parent'
+    (dikonfirmasi ada di skema resmi PDF section 9.2) supaya hierarki Odoo
+    ('ALL / SALEABLE / OTHER / GROCERIES') ikut kebawa ke eSuite, bukan cuma
+    nama leaf-nya. Lihat ProductCategorySyncService.sync() untuk detail
+    lengkap (kenapa 2 fase, & catatan soal rollback).
     """
-    return service.sync(event=event, external_codes=external_codes, limit=limit)
+    return service.sync(
+        event=event,
+        external_codes=external_codes,
+        limit=limit,
+        with_parent=with_parent,
+    )
