@@ -46,9 +46,10 @@ def sync_order_history(
         le=500,
         description=(
             "OPSIONAL -- berapa banyak order TERBARU per customer yang di-scan "
-            "buat cari 1 yang invoice_status='to invoice'. Default 50. "
-            "Perbesar kalau outlet tertentu order 'to invoice'-nya tidak "
-            "ketemu dalam 50 order terbarunya."
+            "buat cari 1 yang invoice_status masuk daftar eligible (\"to invoice\" "
+            "atau \"invoiced\", lihat ELIGIBLE_INVOICE_STATUSES di service). "
+            "Default 50. Perbesar kalau outlet tertentu tidak ketemu order yang "
+            "cocok dalam 50 order terbarunya."
         ),
     ),
 ):
@@ -59,10 +60,11 @@ def sync_order_history(
     order_history_import.md utk detail lengkap perbedaan & histori keputusan).
 
     Scope v1 (PROVISIONAL, bisa di-expand nanti): per outlet/customer,
-    HANYA 1 order TERAKHIR yang `invoice_status == "to invoice"` yang
-    dikirim -- BUKAN full history. Kalau 1 customer tidak punya order
-    dengan status itu dalam `lookback_limit` order terbarunya, customer itu
-    di-skip LOKAL (tidak dikirim ke eSuite sama sekali, muncul di
+    HANYA 1 order TERAKHIR yang `invoice_status` masuk `ELIGIBLE_INVOICE_STATUSES`
+    (`["to invoice", "invoiced"]` per 28 Agustus 2026, lihat service utk daftar
+    terkini) yang dikirim -- BUKAN full history. Kalau 1 customer tidak punya
+    order dengan status yang cocok dalam `lookback_limit` order terbarunya,
+    customer itu di-skip LOKAL (tidak dikirim ke eSuite sama sekali, muncul di
     `local_skipped` pada response) -- beda dari skip yang dilaporkan eSuite
     sendiri (`esuite_response.data.results[]`, mis. karena product/salesman
     belum ke-resolve).

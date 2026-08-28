@@ -44,12 +44,18 @@ SALESMAN_EXTERNAL_CODE = "202600002"
 
 # Filter scope v1 (28 Agustus 2026, PROVISIONAL -- user: "untuk sekarang buat
 # 1 last order, nanti aku minta feedback actual dari sales"): per outlet,
-# ambil 1 order TERAKHIR dengan invoice_status ini saja (bukan full history).
-# Field Odoo sale.order.invoice_status (selection standar: upselling/invoiced/
-# to invoice/no) -- "to invoice" = user: "sudah dikirim dan/atau sedang dalam
-# pencairan finance". BUKAN state="sale"+locked=true (itu cuma nunjukin
-# invoice_status="invoiced", beda kriteria).
-ELIGIBLE_INVOICE_STATUS = "to invoice"
+# ambil 1 order TERAKHIR dengan invoice_status TERMASUK di list ini (bukan
+# full history). Field Odoo sale.order.invoice_status (selection standar:
+# upselling/invoiced/to invoice/no). Awalnya cuma "to invoice" (= user:
+# "sudah dikirim dan/atau sedang dalam pencairan finance") -- DIREVISI 28
+# Agustus 2026 (lanjutan, instruksi eksplisit user) jadi list, krn "to invoice"
+# adalah status TRANSIT (barang terkirim, invoice belum dibuat) yang cepat
+# berubah jadi "invoiced" begitu tagihan selesai dibuat (tahapan lebih tinggi
+# dari "to invoice", bukan status lain) -- user: "cari order terakhir dengan
+# status to invoice or invoiced (nanti ku tambah status yang complete)".
+# List ini SENGAJA dibuat extensible -- tambah status baru di sini kalau user
+# minta lagi nanti (jangan ubah jadi single-value lagi).
+ELIGIBLE_INVOICE_STATUSES = ["to invoice", "invoiced"]
 
 # Berapa banyak order TERBARU per customer yang di-scan (dari
 # get_order_history_by_customer(), sudah date_order desc) buat cari yang
@@ -69,8 +75,9 @@ class OrderHistorySyncService:
     POST /v1/webhook/orders/import (endpoint TERPISAH dari POST /sales-order
     yang sudah ada di Postman collection -- lihat order_history_import.md
     utk detail perbedaannya). Scope v1: per outlet/customer, cuma 1 order
-    TERAKHIR yang invoice_status="to invoice" (PROVISIONAL, bisa di-expand
-    ke full-history nanti kalau user minta pasca feedback tim sales).
+    TERAKHIR yang invoice_status masuk ELIGIBLE_INVOICE_STATUSES (PROVISIONAL,
+    bisa di-expand ke full-history nanti kalau user minta pasca feedback tim
+    sales).
 
     Terima 1 ATAU BANYAK customer_id sekaligus (kirim 1 -> cuma 1 yang
     diproses) -- desain diminta user 28 Agustus 2026 supaya endpoint yang
@@ -94,14 +101,15 @@ class OrderHistorySyncService:
         for customer_id in customer_ids:
             orders = self.odoo.get_order_history_by_customer(customer_id, limit=lookback_limit)
             match = next(
-                (o for o in orders if o.get("invoice_status") == ELIGIBLE_INVOICE_STATUS),
+                (o for o in orders if o.get("invoice_status") in ELIGIBLE_INVOICE_STATUSES),
                 None,
             )
             if not match:
+                eligible_str = "/".join(ELIGIBLE_INVOICE_STATUSES)
                 local_skipped.append({
                     "customer_id": customer_id,
                     "reason": (
-                        f"tidak ada order dengan invoice_status='{ELIGIBLE_INVOICE_STATUS}' "
+                        f"tidak ada order dengan invoice_status in [{eligible_str}] "
                         f"dalam {lookback_limit} order terbaru customer ini"
                     ),
                 })
@@ -142,7 +150,7 @@ class OrderHistorySyncService:
             },
             note=(
                 f"orders/import v1 -- 1 order terakhir/outlet, "
-                f"invoice_status='{ELIGIBLE_INVOICE_STATUS}', "
+                f"invoice_status in {ELIGIBLE_INVOICE_STATUSES}, "
                 f"{len(local_skipped)} customer di-skip lokal (tidak ada order match)"
             ),
         )
