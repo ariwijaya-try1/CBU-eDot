@@ -17,6 +17,7 @@ from app.api.routes.pricelist import router as pricelist_router
 from app.api.routes.salesman_division import router as salesman_division_router, deactivate_router as salesman_division_deactivate_router
 from app.api.routes.odoo_get import router as odoo_get_router
 from app.api.routes.debug import router as debug_router
+from app.api.routes.order_history import router as order_history_router
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -92,6 +93,7 @@ app.include_router(salesman_division_router, prefix="/api", tags=["Sync"])
 app.include_router(salesman_division_deactivate_router, prefix="/api", tags=["Deactivate"])
 app.include_router(odoo_get_router, prefix="/api", tags=["odoo - Get"])
 app.include_router(debug_router, prefix="/api", tags=["Debug"])
+app.include_router(order_history_router, prefix="/api", tags=["Sync"])
 
 
 @app.get("/")

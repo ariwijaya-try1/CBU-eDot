@@ -74,6 +74,27 @@ class EsuiteClient:
         response = self._safe_request("POST", url, data=raw_body, headers=headers)
         return self._handle_response(response, request_id)
 
+    def push_raw(self, entity_path: str, payload: dict, request_id: str | None = None) -> dict:
+        """
+        Push (POST) ke eSuite dengan payload APA ADANYA (BUKAN dibungkus
+        {"event", "data"} seperti push()) -- dipakai utk endpoint yang skema
+        body-nya beda dari envelope event/data yang dipakai semua entity
+        sync lain, mis. POST /orders/import (28 Agustus 2026, payload dev
+        eDot: {"company_external_id": ..., "orders": [...]}). Auth/signing
+        logic tetap sama persis (reuse _headers/_sign/_safe_request/
+        _handle_response) -- cuma bentuk body-nya beda, caller yang bentuk
+        payload lengkap.
+        """
+        request_id = request_id or uuid.uuid4().hex
+
+        raw_body = json.dumps(payload, separators=(",", ":")).encode()
+
+        url = f"{self.base_url}/{entity_path}"
+        headers = self._headers(raw_body, request_id)
+
+        response = self._safe_request("POST", url, data=raw_body, headers=headers)
+        return self._handle_response(response, request_id)
+
     def pull(self, entity_path: str, page: int = 1, limit: int = 100) -> dict:
         """GET (pull) reference/master data dari eSuite. Body kosong -> sign string kosong."""
         raw_body = b""
