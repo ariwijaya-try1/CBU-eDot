@@ -11,14 +11,20 @@ from app.api.routes.customer_grouping import router as customer_grouping_router
 from app.api.routes.customer_sales_mapping import router as customer_sales_mapping_router, unmap_router as customer_sales_unmap_router
 from app.api.routes.customer_pricelist_mapping import router as customer_pricelist_mapping_router
 from app.api.routes.customer_geolocation import router as customer_geolocation_router
+from app.api.routes.customer_upsert_geo_branch_sales import router as customer_upsert_geo_branch_sales_router
 from app.api.routes.stock_matrix import router as stock_matrix_router
 from app.api.routes.pricelist import router as pricelist_router
 from app.api.routes.salesman_division import router as salesman_division_router, deactivate_router as salesman_division_deactivate_router
 from app.api.routes.odoo_get import router as odoo_get_router
 from app.api.routes.debug import router as debug_router
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
 from app.core.config import settings
 from app.core.security import verify_api_key
 from app.core.exceptions import AppError
+from app.core.limiter import limiter
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -30,6 +36,19 @@ app = FastAPI(
     # tetap static API key tanpa masa berlaku, ini cuma soal state UI.
     swagger_ui_parameters={"persistAuthorization": True},
 )
+
+# Rate limiting (28 Agustus 2026) -- AKTIVASI slowapi yang sebelumnya cuma
+# ke-setup di app/core/limiter.py tapi tidak pernah dipasang ke app (lihat
+# security_audit.md temuan #2, 16 Agustus). 3 baris ini yang sebelumnya
+# hilang: daftarkan limiter ke app.state, pasang exception handler bawaan
+# slowapi (balikin 429 rapi kalau limit kelewat), pasang middleware-nya.
+# default_limits (300/menit per IP) diatur di limiter.py itu sendiri, BUKAN
+# di sini -- berlaku otomatis ke SEMUA endpoint tanpa perlu decorator
+# @limiter.limit(...) satu-satu di tiap route (minimal invasive, tidak
+# perlu ubah file route manapun).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 
 @app.exception_handler(HTTPException)
@@ -64,6 +83,7 @@ app.include_router(customer_group_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_grouping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_pricelist_mapping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_upsert_geo_branch_sales_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_geolocation_router, prefix="/api", tags=["Update"])
 app.include_router(customer_sales_unmap_router, prefix="/api", tags=["Un-Map"])
 app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])

@@ -1,8 +1,24 @@
 from fastapi import APIRouter, Query
 from app.clients.esuite_client import EsuiteClient
+from app.core.exceptions import ValidationError
 
 router = APIRouter()
 client = EsuiteClient()
+
+# Whitelist entity_path (28 Agustus 2026) -- FIX dari security audit
+# 16 Agustus (temuan #1): sebelumnya entity_path diterima BEBAS dari user
+# lalu langsung disambung ke URL eSuite tanpa validasi -- siapapun pemegang
+# API key bridge ini bisa GET path APAPUN di bawah host eSuite (bukan cuma
+# entity referensi yang dimaksud endpoint ini), risiko probing/enumerasi
+# endpoint eSuite yang tidak dimaksud. Daftar di bawah = entity yang MEMANG
+# dipakai project ini (referensi lookup + entity utama), sesuai saran fix
+# di security_audit.md. Kalau nanti butuh entity baru yang belum ada di
+# sini, tambahkan ke set ini (bukan dibuka bebas lagi).
+ALLOWED_ENTITY_PATHS = {
+    "currency", "uom", "product-type", "uom-level", "administrative-areas",
+    "product", "product-category", "branches", "warehouse", "customers",
+    "customergroup", "stock-matrix",
+}
 
 
 @router.get("/debug/pull/{entity_path}")
@@ -36,6 +52,13 @@ def pull_reference(
     GET /api/debug/pull/uom?limit=100
     GET /api/debug/pull/product?external_codes=ODOO-PROD-18374,ODOO-PROD-8857
     """
+    if entity_path not in ALLOWED_ENTITY_PATHS:
+        raise ValidationError(
+            f"entity_path '{entity_path}' tidak dikenal -- daftar yang diizinkan: "
+            f"{', '.join(sorted(ALLOWED_ENTITY_PATHS))}",
+            details={"entity_path": entity_path, "allowed": sorted(ALLOWED_ENTITY_PATHS)},
+        )
+
     if external_codes:
         codes_wanted = {c.strip() for c in external_codes.split(",") if c.strip()}
         # Logic paging dipusatkan di EsuiteClient.find_by_external_codes()
