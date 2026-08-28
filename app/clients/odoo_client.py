@@ -688,6 +688,14 @@ class OdooClient:
         CBU). Field `locked` ikut diambil sebagai jaga-jaga. JANGAN
         petakan ke field `status` payload webhook eDot dulu sebelum dicek
         nilai aslinya dari hasil live endpoint ini.
+
+        FIX LIVE (28 Agustus 2026): field UOM di sale.order.line BUKAN
+        `product_uom` (error RPC "Invalid field 'product_uom' on
+        'sale.order.line'" dari live test user) -- di Odoo 19 CBU sudah
+        `product_uom_id` (konsisten dengan konvensi Many2one modern Odoo,
+        field lama `product_uom` di versi Odoo sebelumnya di-rename).
+        Sudah diperbaiki di query field list di bawah, BELUM di-retest live
+        pasca fix ini.
         """
         domain = [[("partner_id", "=", customer_id)]]
         kwargs = {
@@ -713,7 +721,7 @@ class OdooClient:
             {
                 "fields": [
                     "id", "order_id", "product_id", "name",
-                    "product_uom_qty", "product_uom", "price_unit",
+                    "product_uom_qty", "product_uom_id", "price_unit",
                     "discount", "price_subtotal", "price_tax", "price_total",
                 ],
             },
