@@ -163,6 +163,32 @@ def get_odoo_salesperson_by_customer(
     return result
 
 
+@router.get("/odoo/order-history-by-customer")
+def get_odoo_order_history_by_customer(
+    customer_id: int = Query(..., description="id res.partner (Customer) -- lihat GET /odoo/customer."),
+    limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description=f"Batasi jumlah SALES ORDER (bukan baris item), default {DEFAULT_LIMIT}, maksimal {MAX_LIMIT}."),
+):
+    """
+    DIAGNOSTIC-ONLY (28 Agustus 2026) -- GET mentah riwayat Sales Order
+    (sale.order) milik 1 Customer, LENGKAP dengan baris item-nya
+    (sale.order.line, key "lines" per order). TIDAK push apapun ke eSuite.
+
+    Konteks: user butuh repopulate history order lama (yang selama ini
+    cuma ada di Odoo, belum kelihatan di app eDot) lewat webhook terpisah
+    POST /v1/webhook/orders/import (BELUM ada di Postman collection kita,
+    lihat order_history_import.md di project memory) -- endpoint ini
+    LANGKAH RISET PERTAMA, lihat dulu bentuk data asli sale.order/
+    sale.order.line Odoo 19 CBU sebelum dipetakan ke payload webhook itu
+    (proses mapping & push ke webhook SENGAJA DITUNDA sampai data ini
+    dicek user).
+
+    customer_id yang tidak ditemukan/tidak punya order TIDAK menghasilkan
+    error -- balik list kosong (konsisten dengan
+    GET /odoo/customer-by-salesperson).
+    """
+    return odoo.get_order_history_by_customer(customer_id=customer_id, limit=limit)
+
+
 @router.get("/odoo/pricelist")
 def get_odoo_pricelist(
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),

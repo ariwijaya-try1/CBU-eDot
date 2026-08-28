@@ -151,16 +151,29 @@ class ProductCategorySyncService:
     def _pull_esuite_category_map(self) -> dict:
         """
         Full-pull GET /product-category, bangun map external_code -> id
-        eSuite. PAKAI PULL LOOP MANUAL (BUKAN EsuiteClient.find_by_external_
-        codes() generik) -- struktur response entity ini NYELENEH: field
-        "external_code" ADA di top-level record, TAPI id eSuite yang
-        sebenarnya NESTED di "product_category.id" (bukan record["id"]
-        langsung). Gotcha yang SAMA PERSIS sudah didokumentasikan & dipakai
-        di product_sync_service.py::_resolve_category_ids() -- pola di sini
-        SENGAJA disalin dari situ, BUKAN reinvent (lihat juga
-        CONFIG_NOTES.md soal struktur response ini).
+        eSuite -- KHUSUS dipakai buat resolve target field "parent" (fase 2
+        sync(), BUKAN dipakai product_sync_service.py -- itu method
+        terpisah dgn namespace id yang BEDA, lihat REVISI di bawah).
 
-        Return: {external_code: esuite_category_id}
+        ⚠️ REVISI 27 Agustus 2026 (setelah test live #1 GAGAL -- kategori
+        GROCERIES/ODOO-CAT-125, field "parent" silent fail: API 200 sukses
+        tapi GET ulang balikin parent KOSONG). Root cause diduga: entity ini
+        punya 2 NAMESPACE ID BEDA dalam 1 response --
+          (1) "product_category.id" (nested) -- id KATEGORI itu sendiri,
+              TERBUKTI BENAR dipakai buat link Product->Category (lihat
+              product_sync_service.py::_resolve_category_ids()).
+          (2) "id" (TOP-LEVEL record) -- diduga id RELASI/MAPPING
+              company<->category (dugaan LAMA di CONFIG_NOTES.md, sebelumnya
+              belum pernah divalidasi lewat test).
+        Percobaan #1 (payload with_parent, test GROCERIES) pakai (1) --
+        GAGAL (silent fail). Percobaan #2 ini ganti ke (2) -- id TOP-LEVEL
+        "id", BUKAN "product_category.id" lagi -- hipotesis field "parent"
+        butuh id dari namespace relasi, bukan id kategori murni. BELUM
+        CONFIRMED -- kalau masih gagal juga, next step eskalasi ke vendor
+        eSuite (bukan tebak-tebak lagi), lihat [[dev_wa_notes]] &
+        product_category_external_code_gap.md.
+
+        Return: {external_code: record_id_top_level}
         """
         result: dict = {}
         page = 1
@@ -170,9 +183,9 @@ class ProductCategorySyncService:
             pulled = self.esuite.pull("product-category", page=page, limit=limit)
             for record in pulled.get("data") or []:
                 code = record.get("external_code")
-                cat = record.get("product_category") or {}
-                if code and cat.get("id"):
-                    result[code] = cat["id"]
+                record_id = record.get("id")
+                if code and record_id:
+                    result[code] = record_id
 
             meta = pulled.get("meta") or {}
             total_page = meta.get("total_page", 1)

@@ -653,6 +653,83 @@ class OdooClient:
         )
         return records[0] if records else None
 
+    def get_order_history_by_customer(self, customer_id: int, limit: int | None = None):
+        """
+        GET mentah riwayat Sales Order (sale.order + sale.order.line) milik
+        1 Customer tertentu -- diagnostic-only (28 Agustus 2026), dipakai
+        GET /odoo/order-history-by-customer. TUJUAN: riset/lihat bentuk data
+        asli sale.order Odoo 19 CBU dulu SEBELUM dipetakan ke payload webhook
+        eDot POST /v1/webhook/orders/import (lihat order_history_import.md
+        di project memory utk detail endpoint eDot & pertanyaan terbuka ke
+        dev) -- endpoint ini TIDAK push apapun ke eSuite, murni GET.
+
+        Domain filter: partner_id = customer_id LANGSUNG (bukan
+        commercial_partner_id) -- konsisten dengan konvensi project ini,
+        "Outlet" = 1 res.partner tunggal (customer_rank > 0), bukan struktur
+        parent/child company (lihat sales_entities_gap.md, "Outlet
+        dikonfirmasi = Customer, bukan entity baru"). Kalau ternyata di data
+        live CBU order-nya nempel ke child contact/alamat pengiriman
+        terpisah (bukan partner utama), field ini perlu direvisi -- baru
+        kelihatan setelah dicoba live.
+
+        order: date_order DESC -- order terbaru duluan, lebih berguna buat
+        inspeksi manual daripada urutan id.
+
+        Order header fields dipilih dari model standar Odoo Sales
+        (`sale.order`) -- BELUM DIVALIDASI ke instance Odoo CBU (pola sama
+        seperti get_pricelists()/get_pricelist_items(), assistant tidak
+        punya akses network langsung ke Odoo dari sandbox cloud). Kalau
+        muncul error RPC (field/model tidak ada/tidak accessible dari API
+        key ini), kabari pesan errornya biar disesuaikan.
+
+        ⚠️ "state" Odoo 19: kemungkinan cuma ada draft/sent/sale/cancel
+        (value "done" yang lama sudah digantikan field terpisah `locked` di
+        versi Odoo yang lebih baru -- BELUM dikonfirmasi persis di versi 19
+        CBU). Field `locked` ikut diambil sebagai jaga-jaga. JANGAN
+        petakan ke field `status` payload webhook eDot dulu sebelum dicek
+        nilai aslinya dari hasil live endpoint ini.
+        """
+        domain = [[("partner_id", "=", customer_id)]]
+        kwargs = {
+            "fields": [
+                "id", "name", "date_order", "state", "locked",
+                "invoice_status", "partner_id", "user_id", "currency_id",
+                "amount_untaxed", "amount_tax", "amount_total",
+            ],
+            "order": "date_order desc",
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        orders = self._execute("sale.order", "search_read", domain, kwargs)
+        if not orders:
+            return []
+
+        order_ids = [o["id"] for o in orders]
+        lines = self._execute(
+            "sale.order.line",
+            "search_read",
+            [[("order_id", "in", order_ids)]],
+            {
+                "fields": [
+                    "id", "order_id", "product_id", "name",
+                    "product_uom_qty", "product_uom", "price_unit",
+                    "discount", "price_subtotal", "price_tax", "price_total",
+                ],
+            },
+        )
+
+        lines_by_order = {}
+        for line in lines:
+            # order_id datang sbg [id, display_name] (many2one Odoo standar)
+            order_id = line["order_id"][0] if line["order_id"] else None
+            lines_by_order.setdefault(order_id, []).append(line)
+
+        for order in orders:
+            order["lines"] = lines_by_order.get(order["id"], [])
+
+        return orders
+
     def get_customer_categories(self, limit: int | None = None):
         """
         GET mentah res.partner.category (Contact Tags) -- kandidat SSOT buat
