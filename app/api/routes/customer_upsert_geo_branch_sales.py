@@ -28,22 +28,31 @@ def upsert_customer_geo_branch_sales(
         ),
     ),
     branch_external_codes: str | None = Query(
-        None,
+        "ODOO-COMPANY-2",
         description=(
             "OPSIONAL -- external_code Branch (format 'ODOO-COMPANY-{id}', "
-            "sama dengan /sync/branch), comma-separated kalau >1. Kalau "
+            "sama dengan /sync/branch), comma-separated kalau >1. DEFAULT "
+            "'ODOO-COMPANY-2' (branch yang dipakai hampir semua backfill "
+            "customer saat ini, instruksi user 28 Agustus 2026) -- ganti "
+            "manual kalau customer ini butuh branch lain. Kosongkan (string "
+            "kosong) kalau memang tidak mau kirim sales sama sekali. Kalau "
             "diisi, salesman_ids WAJIB ikut diisi juga (eSuite mewajibkan "
             "branchs & salesmans di-set bersamaan)."
         ),
     ),
     salesman_ids: str | None = Query(
-        None,
+        "202600002,202600003,202600004",
         description=(
             "OPSIONAL -- employee_id Salesman di eSuite (dipakai query param "
             "lookup GET /employee?employee_id=...), comma-separated kalau >1. "
-            "id+nama yang dikirim ke payload di-resolve OTOMATIS dari hasil "
-            "lookup (id INTERNAL eSuite, BUKAN employee_id ini langsung). "
-            "Kalau diisi, branch_external_codes WAJIB ikut diisi juga."
+            "DEFAULT 3 kode real yang dipakai hampir semua customer saat ini "
+            "('202600002,202600003,202600004', instruksi user 28 Agustus "
+            "2026) -- ganti manual kalau customer ini butuh salesman "
+            "berbeda. Kosongkan (string kosong) kalau memang tidak mau "
+            "kirim sales sama sekali. id+nama yang dikirim ke payload "
+            "di-resolve OTOMATIS dari hasil lookup (id INTERNAL eSuite, "
+            "BUKAN employee_id ini langsung). Kalau diisi, "
+            "branch_external_codes WAJIB ikut diisi juga."
         ),
     ),
     salesman_names: str | None = Query(
@@ -72,7 +81,16 @@ def upsert_customer_geo_branch_sales(
     punya address/geo data di eSuite. Kalau customer ini sudah pernah
     di-upsert sebelumnya (via /sync/customers atau endpoint ini), panggilan
     ulang berpotensi menambah address baru, bukan update yang lama (risiko
-    belum diverifikasi vendor, sama seperti endpoint geo existing).
+    belum diverifikasi vendor, sama seperti endpoint geo existing). Hipotesis
+    user (28 Agustus 2026, BELUM dikonfirmasi): "id": "" mungkin diabaikan
+    eSuite (pola sama dengan sales.branchs/salesmans "[]" yang terbukti
+    diabaikan di /unmap/customer-sales) -- kalau benar, risiko numpuk ini
+    tidak terjadi, tapi belum ada test live yang membuktikan/membantah.
+
+    branch_external_codes & salesman_ids sudah ada DEFAULT (branch
+    "ODOO-COMPANY-2" + 3 salesman tetap yang dipakai hampir semua customer
+    saat ini) supaya tidak perlu diisi manual tiap panggilan -- tetap bisa
+    dioverride atau dikosongkan kalau customer tertentu butuh beda.
     """
     return service.upsert(
         customer_id=customer_id,
