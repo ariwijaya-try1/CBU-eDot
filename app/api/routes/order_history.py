@@ -52,6 +52,15 @@ def sync_order_history(
             "cocok dalam 50 order terbarunya."
         ),
     ),
+    salesman_external_code: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL -- override external_code Salesman utk SEMUA order di "
+            "panggilan ini (default: constant SALESMAN_EXTERNAL_CODE di service, "
+            "\"202600002\"). Berguna buat testing kode salesman lain (mis. "
+            "\"SALES-DUMMY-DEV\", \"202600003\", \"202600004\") tanpa ubah kode."
+        ),
+    ),
 ):
     """
     v1 (28 Agustus 2026) -- push riwayat order ke webhook eDot BARU
@@ -73,11 +82,18 @@ def sync_order_history(
     `SALESMAN_EXTERNAL_CODE` di service) -- TIDAK di-mapping presisi ke
     salesperson asli Odoo (dikonfirmasi user, cukup salah satu dari 3 akun
     test real yang dikasih dev, karena visibility order terakhir outlet di
-    app eWork tidak digating per-salesperson).
+    app eWork tidak digating per-salesperson). Bisa di-override per-call lewat
+    query param `salesman_external_code` (mis. buat coba kode lain kalau
+    default-nya "not resolved" di eSuite, lihat project memory
+    order_history_import.md Test live #3).
 
     Response HTTP 200 dari endpoint ini TIDAK BERARTI semua order sukses
     ke-import ke eSuite -- WAJIB baca `esuite_response.data.results[]` per
     order (`imported`/`skipped`+`reason`).
     """
     parsed_ids = _parse_customer_ids(customer_ids)
-    return service.sync(customer_ids=parsed_ids, lookback_limit=lookback_limit)
+    return service.sync(
+        customer_ids=parsed_ids,
+        lookback_limit=lookback_limit,
+        salesman_external_code=salesman_external_code,
+    )

@@ -40,6 +40,12 @@ UOM_NAME_MAPPING = {
 # akan bisa diverifikasi lewat app). Ganti constant ini kalau mau kode lain
 # (202600003/202600004) -- user konfirmasi pilihan di antara 3 kode real
 # tidak berpengaruh ke hasil yang muncul di app.
+#
+# 29 Agustus 2026: Test live #3 nunjukkan kode ini bisa "not resolved" di
+# eSuite (belum jelas kenapa) -- supaya bisa dicoba kode lain tanpa ubah
+# kode/redeploy, sync()/_to_order_payload() sekarang terima
+# salesman_external_code sbg parameter OPSIONAL (override per-call). Constant
+# ini cuma dipakai sbg DEFAULT kalau parameter itu tidak diisi.
 SALESMAN_EXTERNAL_CODE = "202600002"
 
 # Filter scope v1 (28 Agustus 2026, PROVISIONAL -- user: "untuk sekarang buat
@@ -89,11 +95,19 @@ class OrderHistorySyncService:
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def sync(self, customer_ids: list[int], lookback_limit: int | None = None) -> dict:
+    def sync(
+        self,
+        customer_ids: list[int],
+        lookback_limit: int | None = None,
+        salesman_external_code: str | None = None,
+    ) -> dict:
         if not customer_ids:
             raise ValidationError("customer_ids tidak boleh kosong")
 
         lookback_limit = lookback_limit or DEFAULT_LOOKBACK_LIMIT
+        # Override manual per-call (mis. buat testing kode salesman lain) --
+        # default tetap SALESMAN_EXTERNAL_CODE kalau tidak diisi caller.
+        resolved_salesman_code = salesman_external_code or SALESMAN_EXTERNAL_CODE
 
         orders_payload = []
         local_skipped = []  # customer yang TIDAK ketemu order "to invoice" -- tidak sempat dikirim ke eSuite sama sekali
@@ -115,7 +129,7 @@ class OrderHistorySyncService:
                 })
                 continue
 
-            orders_payload.append(self._to_order_payload(match, customer_id))
+            orders_payload.append(self._to_order_payload(match, customer_id, resolved_salesman_code))
 
         result = {
             "company_external_id": COMPANY_EXTERNAL_ID,
@@ -157,7 +171,7 @@ class OrderHistorySyncService:
 
         return result
 
-    def _to_order_payload(self, order: dict, customer_id: int) -> dict:
+    def _to_order_payload(self, order: dict, customer_id: int, salesman_external_code: str) -> dict:
         items = []
         for line in order.get("lines", []):
             # Skip baris section/note Odoo (display_type line_section/line_note)
@@ -179,10 +193,28 @@ class OrderHistorySyncService:
                     details={"odoo_uom_name": uom_name_odoo, "known_mappings": list(UOM_NAME_MAPPING.keys())},
                 )
 
+            # eSuite orders/import (Go backend) WAJIB quantity = integer
+            # (struct field int64) -- ditemukan live 28 Agustus 2026: Odoo
+            # product_uom_qty selalu Python float (mis. 2.0), json.dumps()
+            # menulis "2.0", eSuite REJECT dgn error "cannot unmarshal number
+            # 2.0 into ... type int64". Fix: cast ke int eksplisit -- TAPI
+            # kalau qty punya pecahan beneran (mis. 2.5 kg), jangan diam-diam
+            # dibulatkan/dipotong (bisa keliru datanya) -- raise error jelas
+            # supaya ketahuan, bukan silently truncate.
+            qty_raw = line.get("product_uom_qty")
+            qty_int = int(qty_raw) if qty_raw is not None else None
+            if qty_int is None or float(qty_raw) != qty_int:
+                raise ValidationError(
+                    f"quantity order line '{qty_raw}' bukan bilangan bulat -- "
+                    f"eSuite orders/import cuma terima quantity integer (Go int64), "
+                    f"order id {order.get('id')}, customer {customer_id}",
+                    details={"quantity_raw": qty_raw, "order_id": order.get("id")},
+                )
+
             items.append({
                 "product_external_code": f"{PRODUCT_EXTERNAL_CODE_PREFIX}{product[0]}",
                 "name": line.get("name"),
-                "quantity": line.get("product_uom_qty"),
+                "quantity": qty_int,
                 "uom": uom_value,
                 "unit_price": line.get("price_unit"),
                 "discount": 0,  # non-priority v1, instruksi user 28 Agustus 2026
@@ -196,7 +228,7 @@ class OrderHistorySyncService:
             "order_date": order.get("date_order"),
             "status": "completed",  # hardcode, dikonfirmasi dev (jawaban #2)
             "customer": {"external_code": f"{CUSTOMER_EXTERNAL_CODE_PREFIX}{customer_id}"},
-            "salesman": {"external_code": SALESMAN_EXTERNAL_CODE},
+            "salesman": {"external_code": salesman_external_code},
             "currency": CURRENCY,
             "items": items,
             "amount": {

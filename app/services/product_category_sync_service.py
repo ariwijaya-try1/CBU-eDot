@@ -155,25 +155,22 @@ class ProductCategorySyncService:
         sync(), BUKAN dipakai product_sync_service.py -- itu method
         terpisah dgn namespace id yang BEDA, lihat REVISI di bawah).
 
-        ⚠️ REVISI 27 Agustus 2026 (setelah test live #1 GAGAL -- kategori
-        GROCERIES/ODOO-CAT-125, field "parent" silent fail: API 200 sukses
-        tapi GET ulang balikin parent KOSONG). Root cause diduga: entity ini
-        punya 2 NAMESPACE ID BEDA dalam 1 response --
-          (1) "product_category.id" (nested) -- id KATEGORI itu sendiri,
-              TERBUKTI BENAR dipakai buat link Product->Category (lihat
-              product_sync_service.py::_resolve_category_ids()).
-          (2) "id" (TOP-LEVEL record) -- diduga id RELASI/MAPPING
-              company<->category (dugaan LAMA di CONFIG_NOTES.md, sebelumnya
-              belum pernah divalidasi lewat test).
-        Percobaan #1 (payload with_parent, test GROCERIES) pakai (1) --
-        GAGAL (silent fail). Percobaan #2 ini ganti ke (2) -- id TOP-LEVEL
-        "id", BUKAN "product_category.id" lagi -- hipotesis field "parent"
-        butuh id dari namespace relasi, bukan id kategori murni. BELUM
-        CONFIRMED -- kalau masih gagal juga, next step eskalasi ke vendor
-        eSuite (bukan tebak-tebak lagi), lihat [[dev_wa_notes]] &
-        product_category_external_code_gap.md.
+        ⚠️ REVISI 28 Agustus 2026 (jawaban resmi dev eDot/vendor eSuite --
+        lihat [[dev_wa_notes]] Note #5 & product_category_external_code_gap.md):
+        id yang benar utk field "parent" adalah "product_category.id"
+        (NESTED) -- BUKAN id top-level record. Revisi ini MEMBATALKAN
+        Percobaan #2 (27 Agustus, sempat pakai id top-level "id" atas dasar
+        hipotesis 2-namespace-id yang BELUM confirmed) dan balik ke
+        pendekatan Percobaan #1.
 
-        Return: {external_code: record_id_top_level}
+        ⚠️ CATATAN: Percobaan #1 (27 Agustus) sempat GAGAL silent-fail saat
+        live test (kategori GROCERIES/ODOO-CAT-125, API 200 sukses tapi GET
+        ulang balikin parent KOSONG) memakai id yang SAMA
+        (product_category.id) -- penyebab gagal itu BELUM terjelaskan dan
+        kemungkinan BUKAN soal pilihan id (mis. timing/cache eSuite). Re-test
+        ulang case yang sama persis WAJIB dilakukan setelah revisi ini.
+
+        Return: {external_code: product_category_id}
         """
         result: dict = {}
         page = 1
@@ -183,7 +180,8 @@ class ProductCategorySyncService:
             pulled = self.esuite.pull("product-category", page=page, limit=limit)
             for record in pulled.get("data") or []:
                 code = record.get("external_code")
-                record_id = record.get("id")
+                category = record.get("product_category") or {}
+                record_id = category.get("id")
                 if code and record_id:
                     result[code] = record_id
 

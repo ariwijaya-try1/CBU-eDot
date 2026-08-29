@@ -56,3 +56,6 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-27T08:35:31.801120+00:00,product,upsert,1,1,0,1,success,,
 2026-08-27T08:36:22.060721+00:00,product,upsert,1,1,0,1,success,,
 2026-08-27T08:36:33.665814+00:00,stock-matrix,upsert,2,2,0,1,success,,
+2026-08-29T03:11:59.618784+00:00,stock-matrix,upsert,1,1,0,1,success,,
+2026-08-29T03:23:07.654918+00:00,stock-matrix,upsert,1,1,0,1,success,,
+2026-08-29T06:10:57.656287+00:00,order_history,import,1,0,1,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match)"
