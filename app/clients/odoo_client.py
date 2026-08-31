@@ -714,6 +714,11 @@ class OdooClient:
                 "id", "name", "date_order", "state", "locked",
                 "invoice_status", "partner_id", "user_id", "currency_id",
                 "amount_untaxed", "amount_tax", "amount_total",
+                # company_id -- BARU 29 Agustus 2026, dipakai
+                # order_history_sync_service.py buat field "branch" di
+                # payload orders/import (dev eDot minta ditambahkan). Many2one
+                # standar, balik sbg [id, display_name].
+                "company_id",
             ],
             "order": "date_order desc",
         }

@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import ValidationError
@@ -73,6 +76,25 @@ ELIGIBLE_INVOICE_STATUSES = ["to invoice", "invoiced"]
 DEFAULT_LOOKBACK_LIMIT = 50
 
 CURRENCY = "IDR"  # string literal, BUKAN object -- beda dari field currency di endpoint /sales-order lama
+
+# Prefix external_code Branch -- SAMA PERSIS dgn branch_sync_service.py
+# ("ODOO-COMPANY-{res.company id}", Branch eSuite = res.company Odoo).
+# Didefinisikan ULANG di sini (bukan cross-import), konsisten convention
+# project "tiap service independen". Field "branch" di payload orders/import
+# BARU diminta dev eDot 29 Agustus 2026 (sebelumnya tidak ada di skema).
+BRANCH_EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
+
+# 29 Agustus 2026: dev eDot minta order_date format RFC3339 dgn offset
+# eksplisit (mis. "2026-08-13T08:58:37+07:00"), BUKAN string mentah Odoo yg
+# sebelumnya di-passthrough apa adanya ("2026-08-13 08:58:37" -- tanpa "T",
+# tanpa offset). Odoo defaultnya SIMPAN datetime dalam UTC naive (konvensi
+# standar Odoo, company_id/user tidak mengubah cara PENYIMPANAN, cuma
+# TAMPILAN di UI) -- ASUMSI ini BELUM eksplisit dikonfirmasi user/dicek ke
+# instance Odoo CBU, tapi ini default Odoo yg berlaku hampir selalu kecuali
+# di-override eksplisit. Kalau ternyata instance ini beda, cuma perlu ganti
+# SOURCE_TIMEZONE di bawah (bukan ubah logic konversi).
+SOURCE_TIMEZONE = timezone.utc
+TARGET_TIMEZONE = ZoneInfo("Asia/Jakarta")  # WIB, fixed +07:00, tidak ada DST
 
 
 class OrderHistorySyncService:
@@ -185,6 +207,49 @@ class OrderHistorySyncService:
 
         return result
 
+    def _format_order_date_rfc3339(self, date_order_raw: str, order_id) -> str:
+        """
+        Convert string date_order MENTAH dari Odoo ("YYYY-MM-DD HH:MM:SS",
+        naive, ASUMSI UTC -- lihat komentar SOURCE_TIMEZONE di atas) jadi
+        RFC3339 dgn offset eksplisit WIB (mis. "2026-08-13T15:58:37+07:00").
+        Diminta dev eDot 29 Agustus 2026 -- sebelumnya field ini di-passthrough
+        mentah apa adanya (lihat order_history_import.md Test live #3, format
+        lama TIDAK bikin error parsing tapi belum pasti benar secara semantik).
+        """
+        if not date_order_raw:
+            raise ValidationError(
+                f"order_date kosong dari Odoo -- order id {order_id}",
+                details={"order_id": order_id},
+            )
+        try:
+            naive = datetime.strptime(date_order_raw, "%Y-%m-%d %H:%M:%S")
+        except ValueError as exc:
+            raise ValidationError(
+                f"order_date '{date_order_raw}' bukan format 'YYYY-MM-DD HH:MM:SS' yang diharapkan dari Odoo -- order id {order_id}",
+                details={"date_order_raw": date_order_raw, "order_id": order_id},
+            ) from exc
+
+        as_source_tz = naive.replace(tzinfo=SOURCE_TIMEZONE)
+        as_target_tz = as_source_tz.astimezone(TARGET_TIMEZONE)
+        return as_target_tz.isoformat(timespec="seconds")
+
+    def _resolve_branch_external_code(self, order: dict, customer_id: int) -> str:
+        """
+        Field "branch" -- BARU diminta dev eDot 29 Agustus 2026 (sebelumnya
+        tidak ada di skema payload orders/import yang sudah di-cross-check).
+        Sumbernya sale.order.company_id (Many2one res.company, format
+        [id, display_name]) -- SAMA persis dgn entity Branch eSuite yang
+        sudah dipush lewat branch_sync_service.py (Branch = res.company).
+        """
+        company_field = order.get("company_id")
+        if not company_field:
+            raise ValidationError(
+                f"sale.order.company_id kosong -- tidak bisa bentuk field 'branch', "
+                f"order id {order.get('id')}, customer {customer_id}",
+                details={"order_id": order.get("id"), "customer_id": customer_id},
+            )
+        return f"{BRANCH_EXTERNAL_CODE_PREFIX}{company_field[0]}"
+
     def _to_order_payload(self, order: dict, customer_id: int, salesman_external_code: str) -> dict:
         items = []
         for line in order.get("lines", []):
@@ -239,9 +304,10 @@ class OrderHistorySyncService:
         return {
             "external_id": f"{ORDER_EXTERNAL_ID_PREFIX}{order.get('id')}",
             "order_number": order.get("name"),
-            "order_date": order.get("date_order"),
+            "order_date": self._format_order_date_rfc3339(order.get("date_order"), order.get("id")),
             "status": "completed",  # hardcode, dikonfirmasi dev (jawaban #2)
             "customer": {"external_code": f"{CUSTOMER_EXTERNAL_CODE_PREFIX}{customer_id}"},
+            "branch": {"external_code": self._resolve_branch_external_code(order, customer_id)},
             "salesman": {"external_code": salesman_external_code},
             "currency": CURRENCY,
             "items": items,
