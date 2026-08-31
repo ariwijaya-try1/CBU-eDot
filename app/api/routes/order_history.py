@@ -61,6 +61,15 @@ def sync_order_history(
             "\"SALES-DUMMY-DEV\", \"202600003\", \"202600004\") tanpa ubah kode."
         ),
     ),
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL -- kalau True, endpoint TIDAK push apa pun ke eSuite. "
+            "Cuma balikin payload yang AKAN dikirim (field `payload` di "
+            "response) supaya bisa di-copy manual buat ditest lewat Postman "
+            "atau tool lain. `esuite_response` selalu null saat dry_run=True."
+        ),
+    ),
 ):
     """
     v1 (28 Agustus 2026) -- push riwayat order ke webhook eDot BARU
@@ -90,10 +99,15 @@ def sync_order_history(
     Response HTTP 200 dari endpoint ini TIDAK BERARTI semua order sukses
     ke-import ke eSuite -- WAJIB baca `esuite_response.data.results[]` per
     order (`imported`/`skipped`+`reason`).
+
+    Set `dry_run=true` buat lihat/ambil payload TANPA push ke eSuite -- field
+    `payload` di response berisi body persis yang AKAN dikirim, siap
+    di-copy-paste ke Postman/tool lain buat testing manual.
     """
     parsed_ids = _parse_customer_ids(customer_ids)
     return service.sync(
         customer_ids=parsed_ids,
         lookback_limit=lookback_limit,
         salesman_external_code=salesman_external_code,
+        dry_run=dry_run,
     )

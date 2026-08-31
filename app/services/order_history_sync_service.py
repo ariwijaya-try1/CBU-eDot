@@ -100,6 +100,7 @@ class OrderHistorySyncService:
         customer_ids: list[int],
         lookback_limit: int | None = None,
         salesman_external_code: str | None = None,
+        dry_run: bool = False,
     ) -> dict:
         if not customer_ids:
             raise ValidationError("customer_ids tidak boleh kosong")
@@ -131,23 +132,36 @@ class OrderHistorySyncService:
 
             orders_payload.append(self._to_order_payload(match, customer_id, resolved_salesman_code))
 
+        # Payload FINAL yang akan (atau -- kalau dry_run -- AKAN, tapi TIDAK
+        # jadi -- dikirim) ke eSuite. Dibentuk sekali, dipakai baik utk
+        # preview dry_run maupun push_raw() beneran di bawah -- hindari
+        # duplikasi literal dict.
+        payload = {"company_external_id": COMPANY_EXTERNAL_ID, "orders": orders_payload}
+
         result = {
             "company_external_id": COMPANY_EXTERNAL_ID,
             "requested_count": len(customer_ids),
             "sent_count": len(orders_payload),
             "local_skipped": local_skipped,
+            "dry_run": dry_run,
+            # Cuma diisi kalau dry_run=True -- caller minta lihat/ambil
+            # payload mentah (mis. buat ditest manual di Postman), BUKAN
+            # bagian dari response normal (hindari bikin response biasa jadi
+            # lebih besar tanpa perlu). Lihat order_history_import.md.
+            "payload": payload if dry_run else None,
             "esuite_response": None,
         }
+
+        if dry_run:
+            # Caller cuma minta preview payload, SENGAJA tidak push ke eSuite.
+            return result
 
         if not orders_payload:
             # Tidak ada 1 pun customer yang match filter -- tidak perlu
             # panggil eSuite sama sekali (hindari push {"orders": []} kosong).
             return result
 
-        response = self.esuite.push_raw(
-            "orders/import",
-            {"company_external_id": COMPANY_EXTERNAL_ID, "orders": orders_payload},
-        )
+        response = self.esuite.push_raw("orders/import", payload)
         result["esuite_response"] = response
 
         # data.summary/data.results[] -- WAJIB dibaca per-order, HTTP 200
