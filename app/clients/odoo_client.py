@@ -410,7 +410,7 @@ class OdooClient:
         )
         return {r["id"]: r["name"] for r in records}
 
-    def get_customers(self, ids: list | None = None):
+    def get_customers(self, ids: list | None = None, names: list | None = None):
         """
         Sumber data untuk entity Customer di eSuite.
         Model: res.partner, difilter customer_rank > 0 (konvensi standar Odoo
@@ -430,6 +430,15 @@ class OdooClient:
         ids (OPSIONAL, 12 Agustus 2026): filter tambahan "id in ids" --
         dipakai buat upsert customer tertentu saja lewat external_code
         (lihat customer_sync_service.py). Kosongkan untuk behavior normal.
+
+        names (OPSIONAL, 31 Agustus 2026): filter tambahan cari customer BY
+        NAMA (bukan id Odoo) -- dipakai fitur "upsert customer by nama"
+        (comma-separated di endpoint, bisa banyak nama sekaligus), lihat
+        customer_sync_service.py::_match_customers_by_name(). Match EXACT
+        case-insensitive per nama (operator Odoo "=ilike", BUKAN ilike
+        biasa/substring yang dipakai get_companies()) -- keputusan user:
+        exact match supaya tidak salah tangkap record yang mirip, filter
+        customer_rank>0/active=True TETAP berlaku sama seperti filter ids.
 
         phone/email (21 Agustus 2026): ditambahkan setelah live test
         `POST /sync/customers` konfirmasi field ini benar-benar tersimpan &
@@ -468,6 +477,8 @@ class OdooClient:
         conditions = [("customer_rank", ">", 0), ("active", "=", True)]
         if ids:
             conditions.append(("id", "in", ids))
+        if names:
+            conditions = conditions + self._name_in_domain(names, op="=ilike")
         domain = [conditions]
 
         return self._execute(
@@ -904,12 +915,18 @@ class OdooClient:
         return result
 
     @staticmethod
-    def _name_in_domain(names: list):
-        """Bangun domain OR: name ilike names[0] OR name ilike names[1] OR ..."""
+    def _name_in_domain(names: list, op: str = "ilike"):
+        """
+        Bangun domain OR: name <op> names[0] OR name <op> names[1] OR ...
+        op default "ilike" (substring, case-insensitive -- dipakai
+        get_companies(), behavior TIDAK BERUBAH). op="=ilike" (exact,
+        case-insensitive) ditambahkan 31 Agustus 2026 untuk get_customers()
+        fitur cari-by-nama -- lihat customer_sync_service.py.
+        """
         if len(names) == 1:
-            return [("name", "ilike", names[0])]
+            return [("name", op, names[0])]
         # Odoo domain OR pakai prefix '|' sebanyak (n-1) sebelum daftar kondisinya
-        return ["|"] * (len(names) - 1) + [("name", "ilike", n) for n in names]
+        return ["|"] * (len(names) - 1) + [("name", op, n) for n in names]
 
     def get_partner_address(self, partner_id: int):
         """Detail alamat pemilik warehouse (res.partner), dipakai untuk isi field address Branch."""

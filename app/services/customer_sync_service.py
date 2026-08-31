@@ -69,13 +69,33 @@ class CustomerSyncService:
         limit: int | None = None,
         batch_size: int | None = None,
         external_codes: str | None = None,
+        names: str | None = None,
         include_payload: bool = False,
     ):
-        odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
-        customers = self.odoo.get_customers(ids=odoo_ids)
+        # names (31 Agustus 2026) -- ALTERNATIF dari external_codes: upsert
+        # customer tertentu dicari BY NAMA (bukan id Odoo). Mutually exclusive
+        # dengan external_codes (bukan digabung/di-OR) -- disengaja supaya
+        # semantik "customer mana yang mau diupsert" selalu jelas 1 cara per
+        # panggilan, tidak ambigu.
+        if external_codes and names:
+            raise ValidationError(
+                "external_codes dan names tidak bisa dipakai BERSAMAAN -- "
+                "pilih salah satu cara pilih customer (by id Odoo/external_code, "
+                "atau by nama)"
+            )
+
+        name_search_report = None
+        if names:
+            requested_names = [n.strip() for n in names.split(",") if n.strip()]
+            if not requested_names:
+                raise ValidationError("names wajib diisi minimal 1 nama kalau param ini dipakai")
+            customers, name_search_report = self._match_customers_by_name(requested_names)
+        else:
+            odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
+            customers = self.odoo.get_customers(ids=odoo_ids)
 
         if not customers:
-            raise ValidationError("Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo (cek juga external_codes kalau diisi)")
+            raise ValidationError("Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo (cek juga external_codes/names kalau diisi)")
 
         total_matched = len(customers)
 
@@ -151,6 +171,11 @@ class CustomerSyncService:
             "failed_count": failed_count,
             "batches": batch_results,
         }
+        # name_search -- HANYA ada kalau param `names` dipakai (additive,
+        # tidak mengubah struktur response untuk pemakaian external_codes/
+        # default yang sudah ada).
+        if name_search_report is not None:
+            result["name_search"] = name_search_report
         log_sync_result("customer", event, result)
         return result
 
@@ -191,6 +216,59 @@ class CustomerSyncService:
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
+
+    def _match_customers_by_name(self, requested_names: list[str]) -> tuple[list[dict], dict]:
+        """
+        Cari Customer di Odoo BY NAMA (bukan id/external_code) -- 1 query
+        bulk (OR "=ilike" per nama, lihat OdooClient.get_customers(names=...)),
+        lalu di-group ULANG per nama yang diminta supaya bisa dilaporkan mana
+        yang gagal -- keputusan user 31 Agustus 2026: exact match (case-
+        insensitive) + kalau ada nama tidak ketemu/ambigu, SKIP nama itu saja
+        (bukan fail-fast seluruh request), nama lain yang valid tetap diproses.
+
+        Return: (customers_to_upsert, report) --
+          report = {"requested": [...], "matched": [...], "not_found": [...],
+                     "ambiguous": {nama: [id_odoo, ...]}}
+        - not_found: nama yang 0 record Odoo cocok persis.
+        - ambiguous: nama yang justru cocok ke LEBIH DARI 1 record Odoo
+          (nama Odoo literally duplikat) -- di-skip juga, TIDAK asal comot
+          salah satu, supaya tidak salah upsert customer yang salah.
+        - Kalau 2 nama request yang berbeda kebetulan match ke id Odoo yang
+          SAMA, customer itu tetap cuma di-upsert 1x (dedup by id).
+        """
+        customers = self.odoo.get_customers(names=requested_names)
+
+        matched_by_lower: dict[str, list[dict]] = {}
+        for c in customers:
+            key = (c.get("name") or "").strip().lower()
+            matched_by_lower.setdefault(key, []).append(c)
+
+        to_upsert: list[dict] = []
+        matched_names: list[str] = []
+        not_found: list[str] = []
+        ambiguous: dict[str, list[int]] = {}
+        seen_ids: set = set()
+
+        for requested in requested_names:
+            records = matched_by_lower.get(requested.strip().lower()) or []
+            if len(records) == 0:
+                not_found.append(requested)
+            elif len(records) > 1:
+                ambiguous[requested] = [r["id"] for r in records]
+            else:
+                record = records[0]
+                matched_names.append(requested)
+                if record["id"] not in seen_ids:
+                    seen_ids.add(record["id"])
+                    to_upsert.append(record)
+
+        report = {
+            "requested": requested_names,
+            "matched": matched_names,
+            "not_found": not_found,
+            "ambiguous": ambiguous,
+        }
+        return to_upsert, report
 
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """

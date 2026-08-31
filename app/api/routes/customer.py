@@ -35,7 +35,22 @@ def sync_customers(
         description=(
             "OPSIONAL (12 Agustus 2026) -- upsert customer TERTENTU saja, "
             "comma-separated, format 'ODOO-PARTNER-{id}' (mis. "
-            "ODOO-PARTNER-1,ODOO-PARTNER-2). Kosongkan untuk semua customer."
+            "ODOO-PARTNER-1,ODOO-PARTNER-2). Kosongkan untuk semua customer. "
+            "TIDAK BISA dipakai bersamaan dengan `names`."
+        ),
+    ),
+    names: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL (31 Agustus 2026) -- ALTERNATIF dari external_codes: "
+            "upsert customer TERTENTU dicari BY NAMA (bukan id Odoo), "
+            "comma-separated kalau >1, mis. 'Swan Mart,NINE MART,PADANG "
+            "PADANG MART'. Match EXACT (case-insensitive, TAPI harus sama "
+            "persis susunan/spasi kata dengan nama di Odoo -- BUKAN partial/"
+            "substring). Nama yang TIDAK ketemu atau ketemu LEBIH DARI 1 "
+            "record (ambigu) akan DI-SKIP (tidak diupsert) dan dilaporkan di "
+            "response['name_search'] -- nama lain yang valid tetap diproses. "
+            "TIDAK BISA dipakai bersamaan dengan `external_codes`."
         ),
     ),
     include_payload: bool = Query(
@@ -55,12 +70,17 @@ def sync_customers(
     `res.partner.type` (itu jenis alamat, bukan tipe customer).
     Push selalu dipecah per batch (default 1000 record/batch) -- lihat
     CustomerSyncService.sync() untuk detail penanganan kegagalan per batch.
+
+    `names` (31 Agustus 2026) -- cara ALTERNATIF pilih customer BY NAMA,
+    lihat deskripsi param di bawah. Nama yang tidak ketemu/ambigu dilaporkan
+    di response['name_search'], tidak menghentikan nama lain yang valid.
     """
     return service.sync(
         event=event,
         limit=limit,
         batch_size=batch_size,
         external_codes=external_codes,
+        names=names,
         include_payload=include_payload,
     )
 
