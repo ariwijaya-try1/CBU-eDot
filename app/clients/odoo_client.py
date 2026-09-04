@@ -811,23 +811,28 @@ class OdooClient:
 
         return self._execute("res.partner.category", "search_read", [[]], kwargs)
 
-    def get_industries(self, limit: int | None = None):
+    def get_industries(self, ids: list | None = None, limit: int | None = None):
         """
         GET mentah res.partner.industry (field standar Odoo "Industry",
         di-assign via res.partner.industry_id) -- ditambahkan 4 September
-        2026 sbg kandidat SSOT BARU utk Customer Group eSuite, menggantikan
-        hipotesis res.partner.category/"Customer Label" di atas (belum 100%
-        dikonfirmasi user, lihat sales_entities_gap.md). Dibikin biar bisa
-        dicek LANGSUNG lewat Swagger apakah data industry di Odoo CBU
-        granularitasnya sama/lebih detail dari 4 grup CBU (FS/MT/GT/HORECA)
-        -- kalau lebih detail (mis. "Restaurant", "Retail"), perlu mapping
-        parent/child manual ke 4 grup itu.
+        2026 sbg SSOT BARU utk Customer Group eSuite, menggantikan hipotesis
+        res.partner.category/"Customer Label" DAN hardcoded list FS/MT/GT/
+        HORECA lama (DIKONFIRMASI user 4 September 2026 -- data real 18
+        industry granular, mis. "FS-Catering"/"GT-Buah"/"LMT-A"/"NKA-A"/
+        "ONLINE"/"Distributor" -- lihat CustomerGroupSyncService &
+        sales_entities_gap.md).
+
+        ids (OPSIONAL, 4 September 2026): filter tambahan "id in ids"
+        (res.partner.industry id) -- dipakai buat upsert industry tertentu
+        saja lewat external_code, pola sama get_sales_teams(ids=...).
+        Kosongkan untuk behavior normal (semua industry).
         """
+        domain = [[("id", "in", ids)]] if ids else [[]]
         kwargs = {"fields": ["id", "name"]}
         if limit:
             kwargs["limit"] = limit
 
-        return self._execute("res.partner.industry", "search_read", [[]], kwargs)
+        return self._execute("res.partner.industry", "search_read", domain, kwargs)
 
     def get_pricelists(self, limit: int | None = None, ids: list | None = None, name: str | None = None):
         """
