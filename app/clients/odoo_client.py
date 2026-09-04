@@ -151,11 +151,25 @@ class OdooClient:
             conditions.append(("id", "in", ids))
         domain = [conditions]
 
+        # "default_code" (2 September 2026, ADDITIF) -- sebelumnya cuma
+        # ditarik di get_products_raw() (diagnostic-only, GET /odoo/product)
+        # tapi TIDAK PERNAH dipakai proses sync asli -- product_sync_service.py
+        # selalu kirim variants[].sku = "" ke eSuite dengan alasan "Odoo tidak
+        # punya SKU terpisah". Dev eDot kirim contoh payload /pricelists yang
+        # WAJIB isi sku (master SKU produk, tidak boleh kosong utk webhook) --
+        # ditambahkan di sini supaya field itu tersedia utk diisi ke sku,
+        # lihat product_sync_service.py::_to_esuite_payload() &
+        # pricelist_progress.md/product_variant_mirror_clarification.md.
         return self._execute(
             "product.product",
             "search_read",
             domain,
-            {"fields": ["id", "name", "free_qty", "categ_id", "list_price", "standard_price", "uom_id"]},
+            {
+                "fields": [
+                    "id", "name", "default_code", "free_qty", "categ_id",
+                    "list_price", "standard_price", "uom_id",
+                ]
+            },
         )
 
     def get_stock_by_warehouse(self, warehouse_id: int, product_ids: list | None = None):
@@ -604,6 +618,30 @@ class OdooClient:
                 # GET /odoo/customer & /odoo/contact langsung kelihatan
                 # pricelist assignment Odoo tanpa panggil endpoint lain.
                 "property_product_pricelist",
+                # category_id (4 September 2026, DIAGNOSTIC-ONLY, TIDAK
+                # dipakai get_customers()/_to_esuite_payload() manapun).
+                # 🆕 STATUS DIREVISI (4 September, sesi sama): SEBELUMNYA
+                # kandidat SSOT Customer Group -- SEKARANG diturunkan jadi
+                # "Customer Label" (istilah user, res.partner.category /
+                # Contact Tags) -- sepertinya cuma tag bebas admin Odoo,
+                # BUKAN representasi Customer Group yang sebenarnya. TETAP
+                # diikutkan di sini (harmless, referensi), tapi field
+                # `industry_id` di bawah yang jadi kandidat utama sekarang.
+                # Datang sbg list of [id, display_name] tuple (many2many
+                # Odoo standar) -- match ke GET /odoo/customer-label.
+                "category_id",
+                # industry_id (4 September 2026, DIAGNOSTIC-ONLY, TIDAK
+                # dipakai get_customers()/_to_esuite_payload() manapun).
+                # Field STANDAR Odoo "Industry" (many2one ke
+                # res.partner.industry) -- kandidat SSOT BARU utk Customer
+                # Group eSuite (belum 100% dikonfirmasi user, lihat
+                # sales_entities_gap.md). Ditambahkan supaya user bisa cek
+                # LANGSUNG lewat Swagger isi per customer sebelum diputuskan
+                # mapping/logic sync-nya (pola diagnostic-dulu yang sama).
+                # Datang sbg [id, display_name] tuple (many2one Odoo
+                # standar) atau `false` kalau kosong -- match ke GET
+                # /odoo/industry.
+                "industry_id",
             ],
         }
         if limit:
@@ -754,19 +792,42 @@ class OdooClient:
 
         return orders
 
-    def get_customer_categories(self, limit: int | None = None):
+    def get_customer_labels(self, limit: int | None = None):
         """
-        GET mentah res.partner.category (Contact Tags) -- kandidat SSOT buat
-        Customer Group/Category (lihat sales_entities_gap.md, open question
-        14 Agustus 2026 & klarifikasi 16 Agustus soal Group vs Category).
-        Dibikin biar bisa dicek LANGSUNG lewat Swagger apakah tag FS/MT/GT/
-        HORECA atau grup afiliasi (mis. "Pepito Group") sudah ada di Odoo.
+        GET mentah res.partner.category (Contact Tags) -- RENAMED dari
+        get_customer_categories() (4 September 2026). SEBELUMNYA dianggap
+        kandidat SSOT Customer Group -- SEKARANG diturunkan statusnya jadi
+        "Customer Label" murni (istilah user): tag bebas yang ditambahkan
+        admin Odoo, TAPI sepertinya TIDAK dipakai/tidak representasikan
+        Customer Group beneran (lihat sales_entities_gap.md). Kandidat SSOT
+        yang lebih kuat sekarang field `industry_id` (res.partner.industry),
+        lihat get_industries() di bawah. Method ini TETAP DIPERTAHANKAN
+        (bukan dihapus) sbg referensi/diagnostic, cuma penamaan & statusnya
+        yang berubah.
         """
         kwargs = {"fields": ["id", "name", "parent_id", "color"]}
         if limit:
             kwargs["limit"] = limit
 
         return self._execute("res.partner.category", "search_read", [[]], kwargs)
+
+    def get_industries(self, limit: int | None = None):
+        """
+        GET mentah res.partner.industry (field standar Odoo "Industry",
+        di-assign via res.partner.industry_id) -- ditambahkan 4 September
+        2026 sbg kandidat SSOT BARU utk Customer Group eSuite, menggantikan
+        hipotesis res.partner.category/"Customer Label" di atas (belum 100%
+        dikonfirmasi user, lihat sales_entities_gap.md). Dibikin biar bisa
+        dicek LANGSUNG lewat Swagger apakah data industry di Odoo CBU
+        granularitasnya sama/lebih detail dari 4 grup CBU (FS/MT/GT/HORECA)
+        -- kalau lebih detail (mis. "Restaurant", "Retail"), perlu mapping
+        parent/child manual ke 4 grup itu.
+        """
+        kwargs = {"fields": ["id", "name"]}
+        if limit:
+            kwargs["limit"] = limit
+
+        return self._execute("res.partner.industry", "search_read", [[]], kwargs)
 
     def get_pricelists(self, limit: int | None = None, ids: list | None = None, name: str | None = None):
         """

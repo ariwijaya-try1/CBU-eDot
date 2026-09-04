@@ -103,18 +103,35 @@ def get_odoo_contact(
     )
 
 
-@router.get("/odoo/customer-category")
-def get_odoo_customer_category(
+@router.get("/odoo/customer-label")
+def get_odoo_customer_label(
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
 ):
     """
-    GET mentah res.partner.category (Contact Tags) -- dipakai buat cek
-    apakah Odoo sudah punya tag FS/MT/GT/HORECA atau grup afiliasi
-    customer (mis. "Pepito Group") di sini. Lihat sales_entities_gap.md
-    untuk konteks kenapa endpoint ini relevan (open question Customer
-    Group/Category SSOT).
+    GET mentah res.partner.category (Contact Tags) -- RENAMED dari
+    /odoo/customer-category (4 September 2026, konsisten dgn
+    OdooClient.get_customer_labels()). Istilah "Customer Category"
+    DIGANTI "Customer Label" -- sepertinya cuma tag bebas admin Odoo,
+    BUKAN representasi Customer Group eSuite yang sebenarnya (lihat
+    sales_entities_gap.md). Kandidat SSOT Customer Group yang lebih kuat
+    sekarang GET /odoo/industry di bawah.
     """
-    return odoo.get_customer_categories(limit=limit)
+    return odoo.get_customer_labels(limit=limit)
+
+
+@router.get("/odoo/industry")
+def get_odoo_industry(
+    limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+):
+    """
+    GET mentah res.partner.industry (field standar Odoo "Industry") --
+    ditambahkan 4 September 2026, kandidat SSOT BARU utk Customer Group
+    eSuite (belum 100% dikonfirmasi user, lihat sales_entities_gap.md).
+    Cek di sini dulu apakah granularitas industry Odoo CBU sama/lebih
+    detail dari 4 grup CBU (FS/MT/GT/HORECA) sebelum diputuskan
+    mapping/logic sync-nya.
+    """
+    return odoo.get_industries(limit=limit)
 
 
 @router.get("/odoo/salesperson")

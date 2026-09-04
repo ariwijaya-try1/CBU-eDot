@@ -158,6 +158,45 @@ class EsuiteClient:
 
         return found
 
+    def find_by_ids(
+        self, entity_path: str, ids: set[str], page_size: int = 200
+    ) -> dict[str, dict]:
+        """
+        Cari beberapa record spesifik by id TOP-LEVEL (BUKAN external_code),
+        paging INTERNAL sama seperti find_by_external_codes() -- dipakai buat
+        verifikasi reference constant hardcode (CURRENCY/PRODUCT_TYPE/
+        PRODUCT_UOM_LEVEL/UOM_MAPPING/CUSTOMER_GROUP_ALL, dst) masih valid di
+        environment eSuite yang aktif sekarang (lihat
+        app/api/routes/debug.py::verify_reference_constants(), 4 September
+        2026 -- ditambahkan pasca insiden currency/uom-level id DEV kepakai
+        di PROD, esuite_prod_cutover.md).
+
+        Match by record.get("id") top-level -- BENAR utk currency/product-type/
+        uom/uom-level/customergroup (semua confirmed top-level id dari sample
+        GET nyata). TIDAK cocok utk product-category (id kategori nested di
+        product_category.id, punya penanganan sendiri di
+        product_sync_service.py::_resolve_category_ids()) -- jangan dipakai
+        utk entity itu.
+
+        Return: {id: record_dict} -- id yang tidak ketemu cukup tidak ada di
+        dict hasil (caller yang putuskan mau treat sebagai not-found).
+        """
+        found: dict[str, dict] = {}
+        current_page = 1
+        total_page = 1
+
+        while current_page <= total_page and len(found) < len(ids):
+            result = self.pull(entity_path, page=current_page, limit=page_size)
+            for record in result.get("data") or []:
+                record_id = record.get("id")
+                if record_id in ids and record_id not in found:
+                    found[record_id] = record
+
+            total_page = (result.get("meta") or {}).get("total_page", current_page)
+            current_page += 1
+
+        return found
+
     def _safe_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
         Bungkus request supaya kegagalan koneksi (DNS gagal, timeout, host

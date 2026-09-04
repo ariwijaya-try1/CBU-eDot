@@ -68,3 +68,18 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-08-31T06:01:51.428111+00:00,customer,upsert,13,13,0,1,success,,
 2026-08-31T06:02:37.040629+00:00,customer,upsert,38,38,0,1,success,,
 2026-08-31T07:01:54.450445+00:00,product,upsert,1,1,0,1,success,,
+2026-08-31T07:22:20.593441+00:00,product,upsert,6,6,0,1,success,,
+2026-08-31T07:31:47.957539+00:00,order_history,import,1,1,0,,success,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match)"
+2026-08-31T07:44:15.131319+00:00,pricelist,upsert,,211,0,1,success,,105 pricelist di-skip (belum ada produk valid di eSuite)
+2026-09-02T01:19:57.593201+00:00,product,upsert,1253,1253,0,1,success,,
+2026-09-02T01:20:25.590460+00:00,customer,upsert,2997,2997,0,3,success,,
+2026-09-02T01:21:22.701235+00:00,stock-matrix,upsert,939,939,0,1,success,,475 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-09-02T01:22:33.218533+00:00,pricelist,upsert,,0,265,1,failed,,51 pricelist di-skip (belum ada produk valid di eSuite)
+2026-09-02T03:38:49.109121+00:00,pricelist,upsert,,1,0,1,success,,
+2026-09-02T03:39:14.908169+00:00,pricelist,upsert,,1,0,1,success,,
+2026-09-04T01:45:14.638674+00:00,product,upsert,1277,1,0,1,success,,
+2026-09-04T01:45:29.413665+00:00,product,upsert,1277,1,0,1,success,,
+2026-09-04T01:55:45.023831+00:00,customer,upsert,3003,1,0,1,success,,
+2026-09-04T03:09:27.198518+00:00,product,upsert,1277,1,0,1,success,,
+2026-09-04T03:12:54.111984+00:00,product,upsert,1277,100,0,1,success,,
+2026-09-04T03:13:14.372942+00:00,product,upsert,1277,100,0,1,success,,

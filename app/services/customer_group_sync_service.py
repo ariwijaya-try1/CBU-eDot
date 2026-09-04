@@ -13,6 +13,15 @@ from app.core.exceptions import ValidationError
 # pertanyaan "apakah sebaiknya nanti ditarik dinamis dari Odoo (kalau field-nya
 # sudah ada)" sengaja DITUNDA per instruksi user (to be confirmed, not urgent).
 #
+# 🆕 STATUS DIREVISI (4 September 2026, user rule baru): 4 grup di bawah ini
+# SEKARANG dianggap ASUMSI, HANYA berlaku utk sandbox/DEV -- BELUM tentu final
+# utk PROD. Sedang diriset kandidat SSOT baru: field standar Odoo `industry_id`
+# (res.partner.industry, lihat OdooClient.get_industries() & GET /odoo/industry),
+# kemungkinan lebih representatif drpd hardcode list ini. List di bawah TIDAK
+# diubah dulu (belum 100% dikonfirmasi), tapi JANGAN dianggap final -- lihat
+# sales_entities_gap.md utk status riset terbaru sebelum keputusan apapun yang
+# bergantung ke 4 grup ini.
+#
 # 4 grup bisnis CBU (dikonfirmasi user 14 Agustus 2026):
 # - Food Service (FS)
 # - Modern Trade (MT)
@@ -58,7 +67,9 @@ EXTERNAL_CODE_PREFIX = "CBU-CUSTGROUP-"
 # IDR (currency default satu-satunya di seluruh bisnis) -- id ini WAJIB
 # PERSIS benar (salah id currency = upsert customer group berpotensi
 # gagal/salah). Value di bawah SUDAH BENAR, tidak perlu diubah.
-CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dikonfirmasi user 24 Agustus 2026
+CURRENCY = {"id": "6a97ad0fba3a62f899d29060"}  # IDR PROD -- direvisi 4 September 2026, dev
+# konfirmasi langsung id lama ("6a695cc1917e8fc836359505") itu id DEV/sandbox, BUKAN PROD
+# (lihat esuite_prod_cutover.md). BELUM ditest live pasca fix ini.
 
 
 class CustomerGroupSyncService:

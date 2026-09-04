@@ -10,7 +10,9 @@ from app.core.sync_logger import log_sync_result
 # lagi di sini (bukan import silang antar service) supaya tiap sync service tetap
 # independen -- konsisten dengan pola konstanta lain di project ini
 # (ADMINISTRATIVE_AREA di branch_sync_service.py, UOM_MAPPING di product_sync_service.py).
-CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
+CURRENCY = {"id": "6a97ad0fba3a62f899d29060"}  # IDR PROD -- direvisi 4 September 2026
+# (id lama "6a695cc1917e8fc836359505" itu id DEV/sandbox, TERBUKTI SALAH di PROD,
+# lihat esuite_prod_cutover.md). BELUM ditest live pasca fix ini.
 
 # Tax Transaction (kode "04", "DPP Nilai Lain") -- WAJIB diisi, dikonfirmasi
 # LANGSUNG oleh dev vendor eSuite: field "invoice.tax.tax_transaction" MANDATORY

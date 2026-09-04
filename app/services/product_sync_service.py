@@ -5,7 +5,10 @@ from app.core.sync_logger import log_sync_result
 
 # Referensi eSuite yang diisi manual (mirip ADMINISTRATIVE_AREA di Branch) --
 # nilai-nilai ini TIDAK datang dari Odoo, itu master data milik eSuite sendiri.
-CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
+CURRENCY = {"id": "6a97ad0fba3a62f899d29060"}  # IDR PROD -- direvisi 4 September 2026
+# dari sample payload resmi dev eDot (balasan atas laporan bug upsert PROD, lihat
+# esuite_prod_cutover.md). Value lama ("6a695cc1917e8fc836359505") itu id DEV/sandbox,
+# TERBUKTI SALAH di PROD (dev konfirmasi 4 September 2026). BELUM ditest live pasca fix ini.
 PRODUCT_TYPE = {
     "id": "664191ad236dfcd5a4000001"
 }  # "Storable Product" (PD-003), dari GET /product-type
@@ -18,7 +21,10 @@ PRODUCT_TYPE = {
 # ada kebutuhan tier packaging beneran (Karton/Pack/Pcs dst), jadi 1 Level
 # generic cukup. Kalau nanti kebutuhan tier berubah, bikin Level baru lewat
 # POST /uom-level dan ganti constant ini.
-PRODUCT_UOM_LEVEL = {"id": "01KZ5895R0T1JTR4QTVFGE3GHF"}  # "Low", dari GET /uom-level
+PRODUCT_UOM_LEVEL = {"id": "01M1N2HRB0HVVG83PCC3GKAT14"}  # "Low" PROD -- direvisi
+# 4 September 2026, dari sample payload resmi dev eDot (Level "Low" versi DEV
+# "01KZ5895R0T1JTR4QTVFGE3GHF" belum ada/tidak valid di PROD, dev buatkan yang baru
+# khusus tenant PROD). BELUM ditest live pasca fix ini.
 
 # Mapping UOM: key = nama uom_id di Odoo (di-lowercase), value = id eSuite.
 # TERKONFIRMASI & SELESAI (5-7 Agustus 2026): cuma "units" & "kg" yang dipakai
@@ -449,6 +455,16 @@ class ProductSyncService:
         # base_price produk induk di payload yang sama, BELUM dikonfirmasi
         # eksplisit -- perlu ditest). "extra_price" field baru, diisi 0
         # (markup di atas base_price, kalau ada).
+        #
+        # "sku" (2 September 2026, FIX) -- SEBELUMNYA selalu dikirim "" dgn
+        # alasan "Odoo tidak punya SKU terpisah dari internal id". TERNYATA
+        # Odoo PUNYA field standar `default_code` (Internal Reference) yang
+        # sebelumnya cuma ditarik di endpoint diagnostic, TIDAK PERNAH dipakai
+        # di sini -- dev eDot kirim contoh payload /pricelists yang WAJIB isi
+        # sku (master SKU), bukan "". Sekarang diisi dari `default_code`
+        # Odoo kalau ada, fallback "" kalau produk itu genuinely tidak punya
+        # kode internal (supaya tidak crash utk produk yang belum diisi).
+        # Lihat product_variant_mirror_clarification.md utk detail lengkap.
         if with_variant:
             existing_id = (existing_variant_ids or {}).get(external_code, "")
             payload["variants"] = [
@@ -457,7 +473,7 @@ class ProductSyncService:
                     "name": product["name"],
                     "external_code": external_code,
                     "attributes": [],
-                    "sku": "",
+                    "sku": product.get("default_code") or "",
                     "barcode": "",
                     "cost": 0,
                     "extra_price": 0,

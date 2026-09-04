@@ -8,7 +8,9 @@ from app.core.exceptions import ValidationError
 # service tetap independen. KALAU value ini berubah (mis. id currency/tax
 # transaction/address type baru dari vendor), update MANUAL di KEDUA file
 # (di sini DAN customer_sync_service.py).
-CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
+CURRENCY = {"id": "6a97ad0fba3a62f899d29060"}  # IDR PROD -- direvisi 4 September 2026
+# (id lama "6a695cc1917e8fc836359505" itu id DEV/sandbox, TERBUKTI SALAH di PROD,
+# lihat esuite_prod_cutover.md). BELUM ditest live pasca fix ini.
 
 TAX_TRANSACTION = {
     "id": "697c890679e59420ead8ef36",

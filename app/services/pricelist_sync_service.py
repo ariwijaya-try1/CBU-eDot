@@ -7,7 +7,9 @@ from app.core.sync_logger import log_sync_result
 # currency di seluruh bisnis). Didefinisikan ulang di sini (bukan import
 # silang antar service), konsisten dengan pola tiap sync service independen
 # di project ini.
-CURRENCY = {"id": "6a695cc1917e8fc836359505"}  # IDR, dari GET /currency
+CURRENCY = {"id": "6a97ad0fba3a62f899d29060"}  # IDR PROD -- direvisi 4 September 2026
+# (id lama "6a695cc1917e8fc836359505" itu id DEV/sandbox, TERBUKTI SALAH di PROD,
+# lihat esuite_prod_cutover.md). BELUM ditest live pasca fix ini.
 
 # Prefix external_code Pricelist -- BARU (18 Agustus 2026), belum pernah
 # dipakai entity apapun sebelumnya. Sumber = product.pricelist.id Odoo.
@@ -116,6 +118,22 @@ class PricelistSyncService:
        -- kemungkinan perlu re-push ulang supaya products[]-nya benar-benar
        terisi (bukan cuma diam2 diabaikan seperti dugaan di atas).
 
+    🆕 FIX 4 September 2026 -- fallback `CUSTOMER_GROUP_ALL` DIHAPUS, param
+    `customer_group_external_code` SEKARANG WAJIB diisi. Endpoint
+    `GET /api/debug/verify-reference-constants` (dibangun 4 September,
+    lihat esuite_prod_cutover.md) menemukan id `CUSTOMER_GROUP_ALL`
+    (`6a890e1ad5d77369eccac407`) TIDAK ADA di tenant PROD -- dikonfirmasi
+    ulang via `GET /customergroup` PROD langsung, record "All Customer
+    Group"/external_code "All" memang tidak pernah dibuat di PROD (25
+    customer group PROD lain semua ada, ini yang tidak). Daripada terus
+    fallback ke id yang basi/tidak ada (risiko silent-fail sama seperti
+    currency kemarin), keputusan user: WAJIBKAN caller isi
+    `customer_group_external_code` eksplisit tiap panggilan -- konsisten
+    dgn arah SCOPE PHASE 1 (27 Agustus, customer_group spesifik per
+    segmen, bukan grup catch-all generik). Constant `CUSTOMER_GROUP_ALL`
+    di atas SENGAJA TIDAK dihapus dari kode (histori/referensi), TAPI
+    TIDAK DIPAKAI lagi -- lihat `sync()` di bawah.
+
     KEPUTUSAN DESAIN LAMA (SEBAGIAN SUDAH DIREVISI, lihat FIX 26 Agustus di
     atas -- riwayat dipertahankan buat konteks, lihat pricelist_progress.md
     utk analisa lengkap):
@@ -140,12 +158,23 @@ class PricelistSyncService:
       (screenshot tab "Prices", semua baris "Fixed Price"). Item lain
       (percentage/formula) di-skip & dihitung di response, TIDAK menggagalkan
       pricelist lain.
-    - `base_price` di tiap variant SENGAJA dikirim 0 (konsisten dgn PDF
-      contoh & instruksi lama soal cost/harga beli tidak boleh dikirim) --
-      `store_price` yang berisi harga jual sebenarnya (dari fixed_price).
-      BELUM dikonfirmasi vendor apakah base_price=0 ini benar secara
-      tampilan UI eSuite -- test dengan 1-2 pricelist dulu (param `ids`)
-      sebelum full push, sama seperti precedent Stock Matrix/Customer Group.
+    - 🆕 2 September 2026 (DIKONFIRMASI USER, merevisi catatan lama di
+      bawah): `base_price` tiap variant SEKARANG diisi `list_price` produk
+      (hasil reuse field `base_price` yang sudah benar di GET /product
+      eSuite, lihat _pull_esuite_product_map()) -- user klarifikasi
+      base_price itu HARGA DASAR produk, BUKAN cost/harga beli (yang tetap
+      terpisah, tetap hardcode 0 di product_sync_service.py, tidak
+      terpengaruh). `store_price` SEKARANG SENGAJA di-hardcode 0 utk FASE 1
+      -- asumsi user: field ini merepresentasikan harga dari
+      provider/vendor ke CBU (mirip konsep cost), bukan harga jual
+      differentiated per customer/pricelist. ⚠️ KONSEKUENSI: harga jual
+      SEBENARNYA yang beda per customer/toko (`fixed_price` item Odoo,
+      variable `store_price` lokal di sync() TETAP dihitung tapi TIDAK
+      dikirim) BELUM tersalur ke eSuite di Fase 1 ini -- PENDING keputusan
+      Fase 2 soal bagaimana diferensiasi harga per pricelist disalurkan.
+      Detail lengkap di pricelist_progress.md.
+      ~~Catatan lama (SEBELUM 2 September, base_price=0 utk semua, PENDING
+      konfirmasi vendor) -- SUDAH DIGANTIKAN keputusan di atas.~~
 
     GUARD (pola sama stock_sync_service.py) -- produk yang belum punya
     product-variant valid ter-embed di eSuite (GET /product, "variants[].id")
@@ -259,9 +288,10 @@ class PricelistSyncService:
         # sama customer_grouping_endpoint), resolve id+name via GET /customergroup
         # (customer group itu WAJIB sudah dibuat manual di eSuite UI dgn
         # external_code terisi & parent "Customer Type", lihat dev_wa_notes.md
-        # Note #1). Kalau TIDAK diisi, fallback ke CUSTOMER_GROUP_ALL (default
-        # lama) -- supaya pricelist yang belum di-migrasi ke skema baru TIDAK
-        # breaking.
+        # Note #1). 🆕 4 September 2026: fallback CUSTOMER_GROUP_ALL DIHAPUS --
+        # id-nya terbukti tidak ada di eSuite PROD (verify-reference-constants +
+        # GET /customergroup langsung), jadi param ini SEKARANG WAJIB diisi,
+        # lihat esuite_prod_cutover.md untuk detail lengkap.
         if customer_group_external_code:
             found_groups = self.esuite.find_by_external_codes(
                 "customergroup", {customer_group_external_code}
@@ -282,7 +312,19 @@ class PricelistSyncService:
                 }
             ]
         else:
-            customer_group_entries = [CUSTOMER_GROUP_ALL]
+            # CUSTOMER_GROUP_ALL TIDAK dipakai lagi sbg fallback (4 September
+            # 2026) -- id-nya tidak ada di eSuite PROD, lihat komentar di atas
+            # & esuite_prod_cutover.md. Error eksplisit di sini supaya gagal
+            # CEPAT & JELAS (bukan 200 sukses tapi customer_group-nya diam-diam
+            # invalid, pola "silent fail" yang berkali-kali kejadian di project
+            # ini).
+            raise ValidationError(
+                "customer_group_external_code wajib diisi -- fallback default "
+                "'All Customer Group' sudah dihapus karena id lama tidak ditemukan "
+                "di eSuite (lihat esuite_prod_cutover.md). Buat/pilih Customer Group "
+                "spesifik di eSuite UI (parent 'Customer Type') lalu isi param ini "
+                "dengan external_code-nya.",
+            )
 
         payload = []
         skipped_pricelist_no_valid_product = []
@@ -295,31 +337,56 @@ class PricelistSyncService:
                 resolved = esuite_products.get(row["product_id"])
                 if not resolved:
                     continue
+                # 🆕 2 September 2026: fixed_price Odoo TETAP dihitung ke
+                # variable ini (buat referensi Fase 2 nanti), TAPI TIDAK
+                # dikirim ke payload lagi -- lihat catatan FIX di bawah.
                 store_price = row["price"]
-                # name/sku/external_code (26 Agustus 2026, FIX) -- lihat
-                # docstring kelas bagian "FIX 26 Agustus" utk alasan lengkap.
-                # "sku" dikosongkan (""), KONSISTEN dgn convention Product
-                # entity sendiri (product_sync_service.py::_to_esuite_payload()
-                # juga selalu kirim variants[].sku = "" -- Odoo CBU memang
-                # tidak punya SKU terpisah dari internal id).
+                # name/sku/external_code (26 Agustus 2026, FIX; direvisi lagi
+                # 2 September 2026) -- lihat docstring kelas bagian "FIX 26
+                # Agustus" utk alasan lengkap.
+                # "name" (2 September 2026, FIX) -- format DIREVISI jadi
+                # "{external_code} - {nama}" (mis. "ODOO-PROD-18374 -
+                # KATSUOBUSHI 500g"), sesuai contoh payload dev eDot ("UI
+                # format"). SEBELUMNYA cuma nama polos.
+                # "sku" (2 September 2026, FIX) -- SEBELUMNYA selalu "" ("Odoo
+                # tidak punya SKU terpisah"), TERNYATA salah asumsi & dev eDot
+                # WAJIB isi sku produk (master SKU) di payload /pricelists.
+                # Sekarang diisi dari sku yang SUDAH di-resolve di
+                # _pull_esuite_product_map() (hasil push /sync/product yang
+                # sudah pakai default_code Odoo, lihat FIX tanggal sama di
+                # product_sync_service.py) -- fallback "" kalau produk itu
+                # belum pernah di-re-push pasca fix atau genuinely tidak
+                # punya default_code.
+                #
+                # "base_price"/"store_price" (2 September 2026, FIX,
+                # DIKONFIRMASI USER -- merevisi catatan PENDING sebelumnya):
+                # base_price = harga dasar (list_price) produk, reuse dari
+                # `resolved["base_price"]` (_pull_esuite_product_map(), hasil
+                # /sync/product yang sudah benar). store_price DISENGAJAKAN
+                # 0 utk FASE 1 (asumsi user: field ini = harga provider ke
+                # CBU, bukan harga jual per customer) -- `store_price` lokal
+                # (fixed_price Odoo) TETAP dihitung di atas tapi TIDAK
+                # dikirim, PENDING Fase 2. Lihat docstring kelas & catatan
+                # pricelist_progress.md utk detail lengkap.
+                base_price = resolved.get("base_price") or 0
                 product_entries.append(
                     {
                         "id": resolved["product_id"],
-                        "name": resolved["name"],
-                        "sku": "",
+                        "name": f"{resolved['external_code']} - {resolved['name']}",
+                        "sku": resolved.get("sku") or "",
                         "external_code": resolved["external_code"],
                         "variant": [
                             {
                                 "id": resolved["variant_id"],
                                 "name": resolved["name"],
-                                "base_price": 0,
-                                "store_price": store_price,
+                                "base_price": base_price,
+                                "store_price": 0,
                             }
                         ],
-                        "min_base_price": 0,
-                        "max_base_price": 0,
-                        "min_store_price": store_price,
-                        "max_store_price": store_price,
+                        "min_base_price": base_price,
+                        "max_base_price": base_price,
+                        "min_store_price": 0,
+                        "max_store_price": 0,
                     }
                 )
 
@@ -601,11 +668,25 @@ class PricelistSyncService:
                         # tambahan) supaya bisa diisi ke product[].name/sku/
                         # external_code di payload -- lihat FIX di sync()
                         # bagian bawah, alasan lengkap di docstring kelas.
+                        # "sku" (2 September 2026, FIX) -- ikut disimpan dari
+                        # variant eSuite yang SAMA (sku yang SUDAH di-set via
+                        # /sync/product, lihat product_sync_service.py fix
+                        # tanggal sama) -- dev eDot WAJIB isi sku produk di
+                        # payload /pricelists, TIDAK BOLEH "" lagi.
                         result[odoo_id] = {
                             "product_id": record["id"],
                             "variant_id": variant["id"],
                             "name": record.get("name") or "",
                             "external_code": code,
+                            "sku": variant.get("sku") or "",
+                            # "base_price" (2 September 2026, FIX) -- reuse
+                            # field top-level "base_price" dari record eSuite
+                            # yang SAMA (sudah diisi list_price Odoo via
+                            # /sync/product, lihat product_sync_service.py
+                            # baris "base_price": product.get("list_price")
+                            # or 0) -- TIDAK ada RPC/pull tambahan, dipakai
+                            # isi products[].variant[].base_price di sync().
+                            "base_price": record.get("base_price") or 0,
                         }
                         break
 
