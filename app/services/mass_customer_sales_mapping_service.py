@@ -90,6 +90,12 @@ class MassCustomerSalesMappingService:
         # SETELAH filtering, supaya limit=5 artinya "5 customer ELIGIBLE
         # pertama", bukan "5 customer PERTAMA dari eSuite" yang belum tentu
         # eligible.
+        # total eligible SEBELUM limit dipotong -- dipakai di response biar
+        # total_eligible_found + skipped_count selalu == total_customers_checked,
+        # tidak tergantung nilai limit (eligible_count di bawah TETAP jumlah
+        # setelah limit, itu yang benar2 di-push/preview).
+        total_eligible_found = len(eligible_codes)
+
         if limit is not None:
             eligible_codes = eligible_codes[:limit]
 
@@ -103,6 +109,7 @@ class MassCustomerSalesMappingService:
             "salesman_resolved": salesman_internal,
             "salesman_branch_ids": sorted(salesman_branch_ids),
             "total_customers_checked": total_customers,
+            "total_eligible_found": total_eligible_found,
             "eligible_count": len(eligible_codes),
             "skipped_count": len(skipped),
             "skipped": skipped,
