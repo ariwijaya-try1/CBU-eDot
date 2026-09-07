@@ -103,3 +103,6 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-09-07T00:20:23.267986+00:00,stock-matrix,upsert,1022,30,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo
 2026-09-07T00:20:52.983931+00:00,stock-matrix,upsert,1022,30,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo
 2026-09-07T00:21:03.316405+00:00,stock-matrix,upsert,1022,1022,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-09-07T01:43:24.226900+00:00,order_history,import,1,0,1,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match)"
+2026-09-07T01:44:00.557835+00:00,order_history,import,1,0,1,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match)"
+2026-09-07T01:51:09.689606+00:00,customer,upsert,3006,1,0,1,success,,

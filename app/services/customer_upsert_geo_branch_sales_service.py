@@ -245,6 +245,9 @@ class CustomerUpsertGeoBranchSalesService:
             },
             "entity_type": "customer",
             "phone": self._only_digits(customer.get("phone")),
+            # mobile -- SEMENTARA disamakan dgn phone (instruksi user 7 Sept
+            # 2026, lihat customer_sync_service.py utk penjelasan lengkap).
+            "mobile": self._only_digits(customer.get("phone")),
             "email": customer.get("email") or "",
         }
 

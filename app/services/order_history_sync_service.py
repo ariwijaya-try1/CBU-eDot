@@ -12,7 +12,15 @@ from app.core.sync_logger import log_sync_result
 # di contoh payload yang sama (lihat order_history_import.md, klarifikasi
 # poin 4). Fixed value sama utk semua order, pola sama dengan CURRENCY di
 # customer_sync_service.py (konstanta wajib, bukan hasil resolve dari Odoo).
-COMPANY_EXTERNAL_ID = "9001065"
+# REVISI 7 September 2026 -- dev eDot konfirmasi LANGSUNG id ini berubah dari
+# "9001065" ke "5120317" (root cause belum dijelaskan dev, kemungkinan sama
+# dgn kasus currency/uom-level: id master data eSuite ternyata bisa berubah
+# per environment/waktu -- lihat esuite_prod_cutover.md). Constant ini BELUM
+# ter-cover endpoint GET /api/debug/verify-reference-constants (lihat
+# debug.py) -- kalau eSuite ada entity_path utk company/organization,
+# pertimbangkan ditambahkan ke situ juga supaya perubahan berikutnya ketahuan
+# otomatis, bukan nunggu laporan manual dev lagi.
+COMPANY_EXTERNAL_ID = "5120317"
 
 # Prefix external_code -- didefinisikan ULANG di sini (bukan cross-import
 # dari customer_sync_service.py/product_sync_service.py), konsisten dengan

@@ -599,6 +599,16 @@ class CustomerSyncService:
             # dibersihkan di sini (bukan di Odoo) supaya konsisten & aman
             # walau nomor ditulis format apapun. Lihat _only_digits().
             "phone": self._only_digits(customer.get("phone")),
+            # mobile -- SEMENTARA disamakan dgn phone (instruksi user 7
+            # September 2026): Odoo 19 CBU cuma punya 1 field nomor telepon
+            # ("phone") -- field "mobile" resmi sudah dihapus dari Contacts
+            # (lihat komentar "mobile" DIHAPUS LAGI di atas, itu soal QUERY
+            # dari Odoo, BUKAN soal payload eSuite ini). eWork app (mobile
+            # app) HANYA baca field "mobile" eSuite utk nomor telepon, jadi
+            # dikirim juga dgn value SAMA seperti "phone" supaya eWork app
+            # tetap dapat nomornya. Revisit kalau Odoo 19 CBU nanti punya
+            # field nomor seluler terpisah lagi.
+            "mobile": self._only_digits(customer.get("phone")),
             "email": customer.get("email") or "",
             # addresses -- ditambahkan 24 Agustus 2026 atas instruksi user,
             # lihat _to_esuite_address() untuk detail field & keputusan
