@@ -40,9 +40,17 @@ def upsert_customer_geo_branch_sales(
             "'ODOO-COMPANY-2' (branch yang dipakai hampir semua backfill "
             "customer saat ini, instruksi user 28 Agustus 2026) -- ganti "
             "manual kalau customer ini butuh branch lain. Kosongkan (string "
-            "kosong) kalau memang tidak mau kirim sales sama sekali. Kalau "
-            "diisi, salesman_ids WAJIB ikut diisi juga (eSuite mewajibkan "
-            "branchs & salesmans di-set bersamaan)."
+            "kosong) kalau memang tidak mau update branch sama sekali -- key "
+            "\"branchs\" TIDAK ikut dikirim (partial-merge, branch existing "
+            "TIDAK ter-reset), dipakai untuk mass update SALESMAN SAJA masa "
+            "pre-live saat branch customer sudah terbawa otomatis dari "
+            "/sync/customers (instruksi user 7 September 2026). 🆕 SEKARANG "
+            "INDEPENDEN dari salesman_ids (sebelumnya wajib diisi bersamaan). "
+            "⚠️ GUARD: kalau dikosongkan & salesman_ids diisi, customer ini "
+            "WAJIB SUDAH punya branch di eSuite (dari /sync/customers atau "
+            "panggilan endpoint ini sebelumnya) -- kalau belum, request "
+            "GAGAL EKSPLISIT (422 ValidationError, bukan diam-diam sukses). "
+            "BELUM ditest live, test 1 customer dulu sebelum mass update."
         ),
     ),
     salesman_ids: str | None = Query(
@@ -58,8 +66,11 @@ def upsert_customer_geo_branch_sales(
             "kalau customer ini butuh salesman berbeda. Kosongkan (string "
             "kosong) kalau memang tidak mau kirim sales sama sekali. id+nama "
             "yang dikirim ke payload di-resolve OTOMATIS dari hasil lookup "
-            "(id INTERNAL eSuite, BUKAN employee_id ini langsung). Kalau "
-            "diisi, branch_external_codes WAJIB ikut diisi juga."
+            "(id INTERNAL eSuite, BUKAN employee_id ini langsung). 🆕 "
+            "SEKARANG INDEPENDEN dari branch_external_codes (sebelumnya "
+            "wajib diisi bersamaan, instruksi user 7 September 2026) -- "
+            "kosongkan branch_external_codes kalau mau mass update SALESMAN "
+            "SAJA (branch existing tidak ikut ter-reset)."
         ),
     ),
     salesman_names: str | None = Query(
@@ -102,6 +113,31 @@ def upsert_customer_geo_branch_sales(
     "ODOO-COMPANY-2" + 3 salesman tetap yang dipakai hampir semua customer
     saat ini) supaya tidak perlu diisi manual tiap panggilan -- tetap bisa
     dioverride atau dikosongkan kalau customer tertentu butuh beda.
+
+    🆕 7 September 2026: branch_external_codes & salesman_ids SEKARANG
+    INDEPENDEN -- SEBELUMNYA kalau salah satu diisi, yang lain WAJIB ikut
+    diisi (aturan eSuite dev 22 Agustus 2026: branchs[]/salesmans[] harus
+    di-set bersamaan). Sekarang kalau salah satu dikosongkan, key terkait
+    ("branchs" atau "salesmans") TIDAK dikirim sama sekali -- partial-merge
+    upsert eSuite tidak akan reset yang sudah ada. Dipakai untuk mass update
+    SALESMAN SAJA (kosongkan branch_external_codes) saat branch customer
+    sudah otomatis terbawa dari /sync/customers (company_id Odoo, keputusan
+    5 September 2026).
+
+    ⚠️ GUARD mass update salesman-only: kalau branch_external_codes dikosongkan
+    TAPI salesman_ids diisi, endpoint ini CEK DULU ke eSuite (GET /customers
+    by external_code) apakah customer SUDAH punya sales.branchs[] -- kalau
+    BELUM, request GAGAL EKSPLISIT dengan 422 ValidationError (bukan diam-diam
+    kirim salesmans[] ke customer yang belum py branch, state jadi tidak
+    lengkap di eSuite). Error ini jadi log kegagalan per customer_id saat
+    dipakai mass update batch (mis. dari n8n) -- customer yang gagal berarti
+    belum pernah di-/sync/customers atau belum di-upsert lewat endpoint ini
+    dengan branch eksplisit.
+
+    Arah "branchs-saja tanpa salesmans" sudah CONFIRMED LIVE (5 September
+    2026) tapi lewat endpoint /sync/customers yang beda; arah "salesmans-saja
+    tanpa branchs" di endpoint INI belum pernah dites live -- test 1 customer
+    dulu sebelum mass update ke banyak customer.
     """
     return service.upsert(
         customer_id=customer_id,

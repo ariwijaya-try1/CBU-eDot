@@ -12,6 +12,7 @@ from app.api.routes.customer_sales_mapping import router as customer_sales_mappi
 from app.api.routes.customer_pricelist_mapping import router as customer_pricelist_mapping_router
 from app.api.routes.customer_geolocation import router as customer_geolocation_router
 from app.api.routes.customer_upsert_geo_branch_sales import router as customer_upsert_geo_branch_sales_router
+from app.api.routes.mass_customer_sales_mapping import router as mass_customer_sales_mapping_router
 from app.api.routes.stock_matrix import router as stock_matrix_router
 from app.api.routes.pricelist import router as pricelist_router
 from app.api.routes.salesman_division import router as salesman_division_router, deactivate_router as salesman_division_deactivate_router
@@ -85,6 +86,7 @@ app.include_router(customer_grouping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_pricelist_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_upsert_geo_branch_sales_router, prefix="/api", tags=["Mapping"])
+app.include_router(mass_customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_geolocation_router, prefix="/api", tags=["Update"])
 app.include_router(customer_sales_unmap_router, prefix="/api", tags=["Un-Map"])
 app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])

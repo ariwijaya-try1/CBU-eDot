@@ -105,20 +105,48 @@ class CustomerUpsertGeoBranchSalesService:
 
         payload_item = self._to_esuite_payload(customer, latitude, longitude)
 
-        # branch/salesman OPSIONAL -- kalau salah satu diisi, WAJIB dua-duanya
-        # (aturan eSuite: sales.branchs[]/salesmans[] harus di-set bersamaan).
-        # Kalau KEDUANYA kosong, key "sales" TIDAK ditambahkan ke payload sama
-        # sekali -- partial-merge upsert eSuite tetap berlaku di level TOP,
-        # jadi mapping sales existing (kalau ada) TIDAK ikut ter-reset.
+        # branch & salesman SEKARANG INDEPENDEN (🆕 7 September 2026, instruksi
+        # eksplisit user -- SEBELUMNYA wajib diisi bersamaan, lihat git blame/
+        # topic file utk histori). Alasan: branch customer SEKARANG sudah
+        # auto-terbawa dari /sync/customers (company_id Odoo, keputusan 5
+        # September 2026, lihat customer_sync_progress.md) -- jadi endpoint
+        # ini butuh bisa mass-update SALESMAN SAJA tanpa wajib isi ulang
+        # branch. Kalau salah satu/kedua param kosong, key terkait ("branchs"
+        # dan/atau "salesmans") TIDAK dikirim -- partial-merge upsert eSuite
+        # tidak akan reset yang sudah ada. Kalau KEDUANYA kosong, key "sales"
+        # TIDAK ditambahkan ke payload sama sekali.
         sales_included = bool(branch_external_codes or salesman_ids)
         if sales_included:
-            if not branch_external_codes or not salesman_ids:
-                raise ValidationError(
-                    "branch_external_codes dan salesman_ids WAJIB diisi "
-                    "BERSAMAAN kalau salah satunya diisi -- eSuite "
-                    "mewajibkan sales.branchs[] dan sales.salesmans[] "
-                    "di-set bersamaan (info dev eSuite, 22 Agustus 2026)"
+            # 🆕 7 September 2026 -- GUARD mass update salesman-only: kalau
+            # branch_external_codes kosong TAPI salesman_ids diisi, customer
+            # ini WAJIB SUDAH punya sales.branchs[] di eSuite dulu (dari
+            # /sync/customers auto-resolve ATAU dari panggilan endpoint ini
+            # sebelumnya dgn branch eksplisit) -- instruksi eksplisit user:
+            # kalau customer belum punya branch, mapping salesman-only harus
+            # GAGAL EKSPLISIT (bukan diam-diam kirim salesmans[] ke customer
+            # yang belum py branch, state jadi ambigu/tidak lengkap di
+            # eSuite). Error ValidationError di bawah JADI log kegagalan per
+            # customer saat dipakai mass update batch (ikut format error
+            # project ini: {error:{code,message,details}}, code
+            # VALIDATION_ERROR, HTTP 422).
+            if not branch_external_codes and salesman_ids:
+                existing_branches = self._get_existing_branches(
+                    payload_item["external_code"]
                 )
+                if not existing_branches:
+                    raise ValidationError(
+                        f"Mapping salesman-only GAGAL utk customer_id "
+                        f"{customer_id} ({payload_item['external_code']}) -- "
+                        "customer ini BELUM punya branch (sales.branchs[]) "
+                        "di eSuite. Jalankan /sync/customers dulu (branch "
+                        "auto-resolve dari company_id Odoo) ATAU isi "
+                        "branch_external_codes eksplisit di call ini, baru "
+                        "ulangi mapping salesman-only.",
+                        details={
+                            "customer_id": customer_id,
+                            "external_code": payload_item["external_code"],
+                        },
+                    )
             payload_item["sales"] = self._build_sales(
                 branch_external_codes, salesman_ids, salesman_names
             )
@@ -252,51 +280,80 @@ class CustomerUpsertGeoBranchSalesService:
     # ------------------------------------------------------------------
     def _build_sales(
         self,
-        branch_external_codes: str,
-        salesman_ids: str,
+        branch_external_codes: str | None,
+        salesman_ids: str | None,
         salesman_names: str | None,
     ) -> dict:
-        branch_codes = [b.strip() for b in branch_external_codes.split(",") if b.strip()]
-        if not branch_codes:
-            raise ValidationError("branch_external_codes wajib diisi minimal 1")
+        # 🆕 7 September 2026 -- branch & salesman SEKARANG INDEPENDEN
+        # (sebelumnya wajib bersamaan). Masing-masing key ("branchs"/
+        # "salesmans") HANYA ditambahkan ke dict hasil kalau param terkait
+        # diisi -- kalau salah satu kosong, key itu TIDAK ikut dikirim,
+        # partial-merge upsert eSuite tidak akan reset yang sudah ada.
+        sales_payload: dict = {}
 
-        sid_list = [s.strip() for s in salesman_ids.split(",") if s.strip()]
-        if not sid_list:
-            raise ValidationError("salesman_ids wajib diisi minimal 1")
+        if salesman_ids:
+            sid_list = [s.strip() for s in salesman_ids.split(",") if s.strip()]
+            if not sid_list:
+                raise ValidationError("salesman_ids wajib diisi minimal 1")
 
-        resolved_salesmen = self._resolve_salesmen(sid_list)
+            resolved_salesmen = self._resolve_salesmen(sid_list)
 
-        if salesman_names:
-            sname_list = [n.strip() for n in salesman_names.split(",") if n.strip()]
-            if len(sid_list) != len(sname_list):
+            if salesman_names:
+                sname_list = [n.strip() for n in salesman_names.split(",") if n.strip()]
+                if len(sid_list) != len(sname_list):
+                    raise ValidationError(
+                        "jumlah salesman_ids dan salesman_names harus SAMA "
+                        "(berpasangan posisi 1-1)",
+                        details={"salesman_ids": sid_list, "salesman_names": sname_list},
+                    )
+                salesmans_payload = [
+                    {"id": r["id"], "name": sname}
+                    for r, sname in zip(resolved_salesmen, sname_list)
+                ]
+            else:
+                salesmans_payload = resolved_salesmen
+
+            sales_payload["salesmans"] = salesmans_payload
+
+        if branch_external_codes:
+            branch_codes = [b.strip() for b in branch_external_codes.split(",") if b.strip()]
+            if not branch_codes:
+                raise ValidationError("branch_external_codes wajib diisi minimal 1")
+
+            resolved_branches = self._resolve_branches(set(branch_codes))
+            missing_branches = [c for c in branch_codes if c not in resolved_branches]
+            if missing_branches:
                 raise ValidationError(
-                    "jumlah salesman_ids dan salesman_names harus SAMA "
-                    "(berpasangan posisi 1-1)",
-                    details={"salesman_ids": sid_list, "salesman_names": sname_list},
+                    "branch_external_codes tidak ditemukan di eSuite -- cek "
+                    "dulu via GET /branches (mungkin belum pernah di-sync "
+                    "lewat /sync/branch, atau salah ketik)",
+                    details={"not_found": missing_branches},
                 )
-            salesmans_payload = [
-                {"id": r["id"], "name": sname}
-                for r, sname in zip(resolved_salesmen, sname_list)
+
+            sales_payload["branchs"] = [
+                {"id": resolved_branches[c]["id"], "name": resolved_branches[c]["name"]}
+                for c in branch_codes
             ]
-        else:
-            salesmans_payload = resolved_salesmen
 
-        resolved_branches = self._resolve_branches(set(branch_codes))
-        missing_branches = [c for c in branch_codes if c not in resolved_branches]
-        if missing_branches:
-            raise ValidationError(
-                "branch_external_codes tidak ditemukan di eSuite -- cek "
-                "dulu via GET /branches (mungkin belum pernah di-sync "
-                "lewat /sync/branch, atau salah ketik)",
-                details={"not_found": missing_branches},
-            )
+        return sales_payload
 
-        branchs_payload = [
-            {"id": resolved_branches[c]["id"], "name": resolved_branches[c]["name"]}
-            for c in branch_codes
-        ]
+    def _get_existing_branches(self, external_code: str) -> list:
+        """
+        Cek apakah customer ini SUDAH punya sales.branchs[] di eSuite --
+        dipakai KHUSUS guard mass update salesman-only (7 September 2026,
+        lihat upsert()). GET /customers by external_code (reuse
+        EsuiteClient.find_by_external_codes() generik, sama pola dgn
+        resolve Pricelist/Branch di service lain).
 
-        return {"branchs": branchs_payload, "salesmans": salesmans_payload}
+        Return: list branchs[] apa adanya dari eSuite -- [] kalau customer
+        belum ketemu di eSuite ATAU ketemu tapi belum py branch (caller yang
+        putuskan mau treat sebagai gagal/lanjut).
+        """
+        found = self.esuite.find_by_external_codes("customers", {external_code})
+        record = found.get(external_code)
+        if not record:
+            return []
+        return (record.get("sales") or {}).get("branchs") or []
 
     def _resolve_salesmen(self, sid_list: list[str]) -> list[dict]:
         resolved = []
