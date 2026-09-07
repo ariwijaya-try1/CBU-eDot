@@ -209,6 +209,7 @@ class PricelistSyncService:
         batch_size: int | None = None,
         include_payload: bool = False,
         customer_group_external_code: str | None = None,
+        with_customer_group: bool = True,
     ):
         # external_codes (21 Agustus 2026) -- ditambahkan buat konsisten
         # dengan entity lain (format "ODOO-PRICELIST-{id}"), TAPI param `ids`
@@ -292,7 +293,21 @@ class PricelistSyncService:
         # id-nya terbukti tidak ada di eSuite PROD (verify-reference-constants +
         # GET /customergroup langsung), jadi param ini SEKARANG WAJIB diisi,
         # lihat esuite_prod_cutover.md untuk detail lengkap.
-        if customer_group_external_code:
+        # 🆕 5 September 2026 -- with_customer_group=False (OPSIONAL, DEFAULT
+        # True = behavior TIDAK BERUBAH utk semua panggilan existing/automation).
+        # Alasan: instruksi user, mau test assign Price List LANGSUNG dari UI
+        # Customer eSuite (field pilih Price List) tapi terhalang krn upsert
+        # pricelist WAJIB bawa customer_group_external_code (4 September). FIX
+        # 26 Agustus 2026 sebenarnya menggabung 3 perubahan sekaligus (key
+        # "product"->"products" diduga KUAT jadi akar masalah asli -- lihat
+        # docstring kelas), customer_group SENDIRI belum pernah diisolasi-test
+        # terpisah, jadi belum ada bukti kuat dia beneran mandatory di eSuite.
+        # Kalau False: customer_group_external_code DIABAIKAN (tidak
+        # divalidasi/tidak wajib), dan key "customer_group" TIDAK dikirim SAMA
+        # SEKALI ke payload (bukan dikirim kosong [], lihat _to_esuite_payload()).
+        if not with_customer_group:
+            customer_group_entries = None
+        elif customer_group_external_code:
             found_groups = self.esuite.find_by_external_codes(
                 "customergroup", {customer_group_external_code}
             )
@@ -323,7 +338,8 @@ class PricelistSyncService:
                 "'All Customer Group' sudah dihapus karena id lama tidak ditemukan "
                 "di eSuite (lihat esuite_prod_cutover.md). Buat/pilih Customer Group "
                 "spesifik di eSuite UI (parent 'Customer Type') lalu isi param ini "
-                "dengan external_code-nya.",
+                "dengan external_code-nya, ATAU set with_customer_group=false (BARU "
+                "5 September 2026) utk skip customer_group sama sekali.",
             )
 
         payload = []
@@ -813,14 +829,19 @@ class PricelistSyncService:
         #    dikirim (SEBELUMNYA sengaja tidak dikirim, keputusan 18 Agustus)
         #    -- DIREVISI atas instruksi eksplisit user 26 Agustus 2026: semua
         #    field ini WAJIB dikirim, konsisten dgn sample sukses dari dev.
-        return {
+        payload = {
             "external_code": f"{EXTERNAL_CODE_PREFIX}{pricelist['id']}",
             "name": pricelist["name"],
             "status": "active" if pricelist.get("active", True) else "inactive",
             "currency": CURRENCY,
             "effective_date": EFFECTIVE_DATE_DEFAULT,
-            "customer_group": customer_group_entries,
             "branch": branch_entries,
             "sales_channel": SALES_CHANNEL_DEFAULT,
             "products": product_entries,
         }
+        # 🆕 5 September 2026 -- customer_group_entries None (with_customer_group=False
+        # di sync()) -> key "customer_group" TIDAK ditulis sama sekali ke payload
+        # (bukan dikirim kosong []), pola sama "sales" di customer_sync_service.py.
+        if customer_group_entries is not None:
+            payload["customer_group"] = customer_group_entries
+        return payload

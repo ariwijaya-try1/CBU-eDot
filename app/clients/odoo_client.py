@@ -424,7 +424,12 @@ class OdooClient:
         )
         return {r["id"]: r["name"] for r in records}
 
-    def get_customers(self, ids: list | None = None, names: list | None = None):
+    def get_customers(
+        self,
+        ids: list | None = None,
+        names: list | None = None,
+        only_with_coordinates: bool = False,
+    ):
         """
         Sumber data untuk entity Customer di eSuite.
         Model: res.partner, difilter customer_rank > 0 (konvensi standar Odoo
@@ -487,10 +492,44 @@ class OdooClient:
         supaya bisa dicek dulu lewat GET /odoo/customer apakah field ini
         ke-populate di instance Odoo CBU (mis. utk outlet PEPITO) sebelum
         diputuskan mau dipakai buat automasi mapping atau tidak.
+
+        industry_id (4 September 2026) -- Many2one ke res.partner.industry,
+        dipakai customer_sync_service.py buat AUTO-RESOLVE customer_groups[]
+        eSuite saat upsert Customer (SSOT sama dgn CustomerGroupSyncService,
+        lihat customer_group_sync_service.py). search_read balikin [id,
+        display_name] kalau terisi, False kalau kosong (partner belum di-set
+        industry) -- pattern sama seperti many2one lain di project ini.
+
+        company_id (5 September 2026) -- Many2one ke res.company, dipakai
+        customer_sync_service.py buat AUTO-RESOLVE sales.branchs[] eSuite
+        saat upsert Customer (instruksi user -- branch customer sekarang
+        mengikuti company_id-nya sendiri di Odoo, BUKAN lagi harus
+        di-mapping manual). SSOT company SAMA dgn Branch eSuite
+        (branch_sync_service.py, res.company), pola resolve company_id ->
+        Branch juga SUDAH dipakai di order_history_sync_service.py &
+        pricelist_sync_service.py utk record lain (sale.order/pricelist).
+        search_read balikin [id, display_name] kalau terisi, False kalau
+        kosong (partner belum di-set company) -- pattern sama many2one lain.
+
+        only_with_coordinates (4 September 2026, OPSIONAL, default False) --
+        filter tambahan "partner_latitude != 0 AND partner_longitude != 0"
+        (instruksi user: upsert cuma customer yang lat/long-nya SUDAH
+        terisi). Filter di LEVEL DOMAIN Odoo (bukan post-filter Python)
+        supaya volume Customer besar tetap efisien (konsisten dgn alasan
+        query bulk 1x yang sudah dipakai field lain di method ini). Pakai
+        `!= 0` (BUKAN `is not None`/truthy check) karena field float Odoo
+        yang kosong balik `0.0`, BUKAN `False`/`None` -- fakta ini sudah
+        dikonfirmasi lewat penggunaan `partner_latitude`/`partner_longitude`
+        di `customer_sync_service.py::_to_esuite_address()` (lihat komentar
+        `or ""` & truthy check di sana). Default `False` = behavior lama
+        100% tidak berubah (semua customer, ada/tidak ada koordinat).
         """
         conditions = [("customer_rank", ">", 0), ("active", "=", True)]
         if ids:
             conditions.append(("id", "in", ids))
+        if only_with_coordinates:
+            conditions.append(("partner_latitude", "!=", 0))
+            conditions.append(("partner_longitude", "!=", 0))
         if names:
             conditions = conditions + self._name_in_domain(names, op="=ilike")
         domain = [conditions]
@@ -503,7 +542,7 @@ class OdooClient:
                 "fields": [
                     "id", "name", "company_type", "phone", "email",
                     "street", "partner_latitude", "partner_longitude",
-                    "property_product_pricelist",
+                    "property_product_pricelist", "industry_id", "company_id",
                 ]
             },
         )

@@ -17,14 +17,19 @@ def upsert_customer_geo_branch_sales(
             "Customer harus customer_rank > 0 dan active = True di Odoo."
         ),
     ),
-    coordinates: str = Query(
-        ...,
+    coordinates: str | None = Query(
+        None,
         description=(
-            "WAJIB -- 1 field 'latitude, longitude' hasil copas LANGSUNG dari "
+            "OPSIONAL -- 1 field 'latitude, longitude' hasil copas LANGSUNG dari "
             "Google Maps (klik-kanan titik lokasi -> klik koordinat paling "
             "atas -> paste apa adanya). Contoh: "
             "-8.800799056816937, 115.18475651821433. Dipakai menggantikan "
-            "partner_latitude/partner_longitude Odoo yang belum ada datanya."
+            "partner_latitude/partner_longitude Odoo yang belum ada datanya. "
+            "Kosongkan kalau memang tidak mau update geo/address (mis. mass "
+            "update sales-only pre-live, instruksi user 7 September 2026) -- "
+            "kalau kosong, key \"addresses\" TIDAK dikirim sama sekali ke "
+            "eSuite (partial-merge upsert, geo/address existing di eSuite "
+            "TIDAK ikut ter-reset)."
         ),
     ),
     branch_external_codes: str | None = Query(
@@ -41,18 +46,20 @@ def upsert_customer_geo_branch_sales(
         ),
     ),
     salesman_ids: str | None = Query(
-        "202600002,202600003,202600004",
+        "202600003",
         description=(
             "OPSIONAL -- employee_id Salesman di eSuite (dipakai query param "
             "lookup GET /employee?employee_id=...), comma-separated kalau >1. "
-            "DEFAULT 3 kode real yang dipakai hampir semua customer saat ini "
-            "('202600002,202600003,202600004', instruksi user 28 Agustus "
-            "2026) -- ganti manual kalau customer ini butuh salesman "
-            "berbeda. Kosongkan (string kosong) kalau memang tidak mau "
-            "kirim sales sama sekali. id+nama yang dikirim ke payload "
-            "di-resolve OTOMATIS dari hasil lookup (id INTERNAL eSuite, "
-            "BUKAN employee_id ini langsung). Kalau diisi, "
-            "branch_external_codes WAJIB ikut diisi juga."
+            "DEFAULT 1 kode ('202600003') -- OVERRIDE SEMENTARA UNTUK MASA "
+            "PRE-LIVE (instruksi user 5 September 2026), MENGGANTIKAN default "
+            "3 kode ('202600002,202600003,202600004', instruksi user 28 "
+            "Agustus 2026) selama pre-live. TODO: kembalikan ke 3 kode "
+            "setelah go-live kalau tidak ada instruksi lain. Ganti manual "
+            "kalau customer ini butuh salesman berbeda. Kosongkan (string "
+            "kosong) kalau memang tidak mau kirim sales sama sekali. id+nama "
+            "yang dikirim ke payload di-resolve OTOMATIS dari hasil lookup "
+            "(id INTERNAL eSuite, BUKAN employee_id ini langsung). Kalau "
+            "diisi, branch_external_codes WAJIB ikut diisi juga."
         ),
     ),
     salesman_names: str | None = Query(
@@ -68,9 +75,13 @@ def upsert_customer_geo_branch_sales(
     """
     Upsert MANUAL 1 customer by id Odoo dalam SATU call ke eSuite --
     gabungan dari 3 hal: (1) data utama customer ditarik dari Odoo (sama
-    logic dengan POST /sync/customers), (2) latitude/longitude MANUAL INPUT
-    (menggantikan data Odoo yang belum ada), (3) branch+salesman OPSIONAL
-    (sama logic dengan POST /mapping/customer-sales).
+    logic dengan POST /sync/customers), (2) latitude/longitude OPSIONAL
+    INPUT (menggantikan data Odoo yang belum ada, kalau diisi), (3)
+    branch+salesman OPSIONAL (sama logic dengan POST /mapping/customer-sales).
+
+    coordinates kosong -- key "addresses" TIDAK ikut dikirim ke eSuite sama
+    sekali (partial-merge upsert, dipakai untuk mass update sales-only masa
+    pre-live, instruksi user 7 September 2026).
 
     Endpoint BARU, TIDAK mengubah /sync/customers, /update/customer-geolocation,
     atau /mapping/customer-sales yang sudah ada -- 3 endpoint itu tetap

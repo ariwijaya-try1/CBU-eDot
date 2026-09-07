@@ -62,6 +62,20 @@ def sync_customers(
             "selalu tampil."
         ),
     ),
+    only_with_coordinates: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL (4 September 2026) -- True: cuma upsert customer yang "
+            "partner_latitude & partner_longitude-nya SUDAH terisi di Odoo "
+            "(keduanya != 0). False (default): semua customer, ada/tidak "
+            "ada koordinat -- behavior lama, tidak berubah. Berlaku sebagai "
+            "filter TAMBAHAN, bareng dgn external_codes/names/limit kalau "
+            "dipakai. ⚠️ Kalau dipakai BARENG `names`: nama yang match "
+            "persis tapi belum ada koordinat akan muncul di "
+            "response['name_search']['not_found'] (bukan berarti customer-"
+            "nya tidak ada)."
+        ),
+    ),
 ):
     """
     Trigger manual sync Customer: Odoo (res.partner, customer_rank > 0) -> eSuite.
@@ -74,6 +88,24 @@ def sync_customers(
     `names` (31 Agustus 2026) -- cara ALTERNATIF pilih customer BY NAMA,
     lihat deskripsi param di bawah. Nama yang tidak ketemu/ambigu dilaporkan
     di response['name_search'], tidak menghentikan nama lain yang valid.
+
+    `only_with_coordinates` (4 September 2026) -- filter opsional, True =
+    cuma customer yang lat/long-nya sudah terisi di Odoo yang di-upsert.
+    Lihat deskripsi param di bawah untuk detail & catatan interaksi dgn
+    `names`.
+
+    `customer_groups` (4 September 2026) -- SEKARANG di-AUTO-RESOLVE dari
+    `res.partner.industry_id` Odoo (bukan perlu panggil endpoint mapping
+    manual `/api/mapping/customer-grouping` terpisah lagi). SYARAT: Customer
+    Group yang bersangkutan HARUS SUDAH pernah di-sync ke eSuite duluan lewat
+    `POST /sync/customer-group` (sumbernya SAMA, res.partner.industry).
+    Customer yang industry_id-nya belum ke-resolve (belum pernah di-sync
+    customer-group-nya) TETAP di-upsert normal (field lain jalan), cuma
+    `customer_groups` utk row itu di-skip -- dilaporkan di
+    response['customer_group_unresolved_industries'] (key ini HANYA muncul
+    kalau ada yang belum ke-resolve). Endpoint manual
+    `/api/mapping/customer-grouping` TETAP ada untuk override/koreksi di luar
+    industry_id.
     """
     return service.sync(
         event=event,
@@ -82,6 +114,7 @@ def sync_customers(
         external_codes=external_codes,
         names=names,
         include_payload=include_payload,
+        only_with_coordinates=only_with_coordinates,
     )
 
 

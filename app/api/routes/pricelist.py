@@ -43,15 +43,28 @@ def sync_pricelist(
     customer_group_external_code: str | None = Query(
         default=None,
         description=(
-            "OPSIONAL (27 Agustus 2026, Phase 1) -- assign customer_group SPESIFIK "
-            "ke SEMUA pricelist yang diproses panggilan ini (mapping MANUAL, 1 nilai "
-            "per panggilan, pola sama customer_group_external_codes di "
-            "/api/mapping/customer-grouping). Customer Group ini WAJIB sudah dibuat "
-            "manual di UI eSuite (parent 'Customer Type') dengan external_code ini. "
-            "Kosongkan untuk fallback ke 'All Customer Group' (default lama) -- "
-            "PERHATIAN: banyak pricelist pakai 'All Customer Group' yang sama bisa "
-            "bikin pricelist saling tertimpa/tidak muncul di app, lihat "
-            "pricelist_progress.md."
+            "WAJIB diisi KECUALI with_customer_group=False di bawah -- assign "
+            "customer_group SPESIFIK ke SEMUA pricelist yang diproses panggilan ini "
+            "(mapping MANUAL, 1 nilai per panggilan, pola sama "
+            "customer_group_external_codes di /api/mapping/customer-grouping). "
+            "Customer Group ini WAJIB sudah dibuat manual di UI eSuite (parent "
+            "'Customer Type') dengan external_code ini. 🆕 4 September 2026: "
+            "fallback lama ke 'All Customer Group' SUDAH DIHAPUS (id-nya tidak ada "
+            "di eSuite PROD, root cause bug 'harga tertimpa' -- lihat "
+            "pricelist_progress.md) -- kosongkan param ini TANPA with_customer_group=False "
+            "akan GAGAL (ValidationError)."
+        ),
+    ),
+    with_customer_group: bool = Query(
+        default=True,
+        description=(
+            "OPSIONAL (BARU 5 September 2026, DEFAULT True = behavior automation/"
+            "panggilan lain TIDAK BERUBAH). Set False utk SKIP customer_group SAMA "
+            "SEKALI dari payload (key 'customer_group' tidak dikirim, bukan dikirim "
+            "kosong []) -- dipakai utk test isolasi apakah customer_group[] beneran "
+            "mandatory di eSuite, atau utk assign Price List LANGSUNG dari UI "
+            "Customer eSuite tanpa customer_group Pricelist ini. Kalau False, param "
+            "customer_group_external_code di atas DIABAIKAN (tidak wajib diisi)."
         ),
     ),
 ):
@@ -80,4 +93,5 @@ def sync_pricelist(
         batch_size=batch_size,
         include_payload=include_payload,
         customer_group_external_code=customer_group_external_code,
+        with_customer_group=with_customer_group,
     )

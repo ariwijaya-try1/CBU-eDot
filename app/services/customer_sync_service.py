@@ -59,6 +59,25 @@ DEFAULT_BATCH_SIZE = 1000
 # sama dengan product_sync_service.py).
 EXTERNAL_CODE_PREFIX = "ODOO-PARTNER-"
 
+# Prefix external_code Customer Group -- HARUS SAMA PERSIS dengan
+# EXTERNAL_CODE_PREFIX di customer_group_sync_service.py (didefinisikan
+# ulang di sini, bukan import silang, konsisten dgn pola CURRENCY di atas).
+# Dipakai 4 September 2026 buat AUTO-RESOLVE customer_groups[] dari
+# res.partner.industry_id Odoo saat upsert Customer (dikonfirmasi user --
+# lihat customer_grouping_endpoint.md). KALAU prefix di
+# customer_group_sync_service.py berubah, prefix ini WAJIB ikut diubah juga.
+CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX = "ODOO-CONTACT-INDUSTRY-"
+
+# Prefix external_code Branch -- HARUS SAMA PERSIS dengan EXTERNAL_CODE_PREFIX
+# di branch_sync_service.py (didefinisikan ulang di sini, bukan import
+# silang, konsisten dgn pola CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX di atas).
+# Dipakai 5 September 2026 buat AUTO-RESOLVE sales.branchs[] dari
+# res.partner.company_id Odoo saat upsert Customer (instruksi user -- branch
+# customer sekarang mengikuti company_id-nya sendiri di Odoo, BUKAN lagi
+# harus di-mapping manual satu-satu). KALAU prefix di branch_sync_service.py
+# berubah, prefix ini WAJIB ikut diubah juga.
+BRANCH_EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
+
 
 class CustomerSyncService:
     def __init__(self):
@@ -73,6 +92,7 @@ class CustomerSyncService:
         external_codes: str | None = None,
         names: str | None = None,
         include_payload: bool = False,
+        only_with_coordinates: bool = False,
     ):
         # names (31 Agustus 2026) -- ALTERNATIF dari external_codes: upsert
         # customer tertentu dicari BY NAMA (bukan id Odoo). Mutually exclusive
@@ -91,13 +111,18 @@ class CustomerSyncService:
             requested_names = [n.strip() for n in names.split(",") if n.strip()]
             if not requested_names:
                 raise ValidationError("names wajib diisi minimal 1 nama kalau param ini dipakai")
-            customers, name_search_report = self._match_customers_by_name(requested_names)
+            customers, name_search_report = self._match_customers_by_name(
+                requested_names, only_with_coordinates=only_with_coordinates
+            )
         else:
             odoo_ids = self._parse_external_codes(external_codes) if external_codes else None
-            customers = self.odoo.get_customers(ids=odoo_ids)
+            customers = self.odoo.get_customers(ids=odoo_ids, only_with_coordinates=only_with_coordinates)
 
         if not customers:
-            raise ValidationError("Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo (cek juga external_codes/names kalau diisi)")
+            raise ValidationError(
+                "Tidak ada res.partner dengan customer_rank > 0 ditemukan di Odoo "
+                "(cek juga external_codes/names/only_with_coordinates kalau diisi)"
+            )
 
         total_matched = len(customers)
 
@@ -112,7 +137,20 @@ class CustomerSyncService:
         if limit is not None:
             customers = customers[:limit]
 
-        payload = [self._to_esuite_payload(c) for c in customers]
+        # customer_groups auto-resolve (4 September 2026) -- 1x bulk lookup
+        # utk SEMUA customer yang BENAR-BENAR mau di-push (bukan per-customer,
+        # hindari N+1 call ke eSuite) -- SENGAJA setelah slicing `limit` di
+        # atas, supaya lookup ke eSuite juga ikut terbatas saat `limit`
+        # dipakai buat diagnostic/test bertahap (konsisten dgn tujuan `limit`
+        # itu sendiri). Lihat _resolve_customer_group_map() utk detail.
+        group_map, unresolved_groups = self._resolve_customer_group_map(customers)
+
+        # branch auto-resolve (5 September 2026) -- sama pola dgn
+        # group_map di atas: 1x bulk pull utk SEMUA customer di batch ini,
+        # lihat _resolve_branch_map() utk detail.
+        branch_map, unresolved_branch_codes = self._resolve_branch_map(customers)
+
+        payload = [self._to_esuite_payload(c, group_map, branch_map) for c in customers]
 
         # Batching -- REVISI 11 Agustus 2026: user konfirmasi bulk upsert di atas
         # ~2000 record kena 502. Push sekarang selalu lewat batch (bukan 1 request
@@ -173,6 +211,27 @@ class CustomerSyncService:
             "failed_count": failed_count,
             "batches": batch_results,
         }
+        # customer_group_unresolved_industries -- HANYA muncul kalau ADA
+        # industry_id yang direferensikan customer di batch ini TAPI Customer
+        # Group-nya belum ketemu di eSuite (belum pernah di-sync lewat
+        # /sync/customer-group). Customer yang bersangkutan TETAP ke-upsert
+        # (field lain jalan normal), cuma customer_groups utk row itu di-skip
+        # -- dilaporkan di sini supaya kelihatan industry mana yang perlu
+        # di-sync-group-kan dulu (keputusan user 4 September 2026, bukan
+        # fail-fast).
+        if unresolved_groups:
+            result["customer_group_unresolved_industries"] = sorted(unresolved_groups)
+
+        # branch_unresolved_companies -- HANYA muncul kalau ADA company_id
+        # yang direferensikan customer di batch ini TAPI Branch-nya belum
+        # ketemu di eSuite (company di luar IN_SCOPE_COMPANY_NAMES ATAU
+        # belum pernah di-/sync/branch). Customer TETAP ke-upsert (field
+        # lain jalan normal), cuma key "sales" utk row itu di-skip --
+        # dilaporkan di sini, pola sama customer_group_unresolved_industries
+        # (keputusan user 5 September 2026, bukan fail-fast).
+        if unresolved_branch_codes:
+            result["branch_unresolved_companies"] = sorted(unresolved_branch_codes)
+
         # name_search -- HANYA ada kalau param `names` dipakai (additive,
         # tidak mengubah struktur response untuk pemakaian external_codes/
         # default yang sudah ada).
@@ -219,7 +278,9 @@ class CustomerSyncService:
             "esuite_response": esuite_result,
         }
 
-    def _match_customers_by_name(self, requested_names: list[str]) -> tuple[list[dict], dict]:
+    def _match_customers_by_name(
+        self, requested_names: list[str], only_with_coordinates: bool = False
+    ) -> tuple[list[dict], dict]:
         """
         Cari Customer di Odoo BY NAMA (bukan id/external_code) -- 1 query
         bulk (OR "=ilike" per nama, lihat OdooClient.get_customers(names=...)),
@@ -237,8 +298,21 @@ class CustomerSyncService:
           salah satu, supaya tidak salah upsert customer yang salah.
         - Kalau 2 nama request yang berbeda kebetulan match ke id Odoo yang
           SAMA, customer itu tetap cuma di-upsert 1x (dedup by id).
+
+        only_with_coordinates (4 September 2026) -- diteruskan APA ADANYA ke
+        get_customers(). ⚠️ CATATAN PENTING: kalau True, nama yang match
+        persis di Odoo TAPI lat/long-nya belum terisi TIDAK akan ke-fetch
+        sama sekali dari query ini -- makanya nama itu bakal muncul di
+        report["not_found"], PADAHAL customer-nya sebenarnya ADA (cuma
+        di-exclude krn belum ada koordinat, BUKAN benar-benar tidak
+        ketemu). Ini trade-off yang disengaja (filter di level Odoo domain
+        biar efisien, bukan post-filter Python) -- kalau butuh bedakan
+        "nama tidak ada" vs "nama ada tapi belum ada koordinat", perlu
+        query terpisah (belum diimplementasi, bukan kebutuhan saat ini).
         """
-        customers = self.odoo.get_customers(names=requested_names)
+        customers = self.odoo.get_customers(
+            names=requested_names, only_with_coordinates=only_with_coordinates
+        )
 
         matched_by_lower: dict[str, list[dict]] = {}
         for c in customers:
@@ -271,6 +345,171 @@ class CustomerSyncService:
             "ambiguous": ambiguous,
         }
         return to_upsert, report
+
+    def _resolve_customer_group_map(self, customers: list[dict]) -> tuple[dict[int, dict], set[str]]:
+        """
+        Resolve res.partner.industry_id (Odoo) -> Customer Group eSuite
+        {id, name}, 1x bulk lookup utk SEMUA customer di batch (bukan
+        per-customer) -- reuse EsuiteClient.find_by_external_codes() yang
+        SAMA dipakai CustomerGroupingService (lihat
+        customer_grouping_endpoint.md), external_code format SAMA PERSIS
+        dgn CustomerGroupSyncService ("ODOO-CONTACT-INDUSTRY-{id}").
+
+        Sumber grouping SAAT INI cuma res.partner.industry_id (Many2one
+        Odoo, 1 customer = 1 industry) -- dikonfirmasi user 4 September
+        2026. Return map per-industry (BUKAN per-customer) sengaja supaya
+        _resolve_customer_groups() bisa dipanggil per-customer & hasilnya
+        LIST (future-proof kalau nanti ada sumber grouping tambahan selain
+        industry_id, instruksi user -- BELUM diimplementasi, cuma prasyarat
+        desain, lihat _resolve_customer_groups()).
+
+        Return: (industry_id_to_group, unresolved_external_codes)
+        - industry_id_to_group: {35: {"id": "6a9a...", "name": "FS-Restaurant"}, ...}
+        - unresolved_external_codes: external_code yang direferensikan
+          customer di batch ini TAPI belum ketemu di eSuite (Customer Group
+          itu belum pernah di-sync lewat /sync/customer-group) -- caller
+          (sync()) yang laporkan ke response, BUKAN raise error (customer
+          tetap harus bisa ke-upsert walau groupnya belum lengkap).
+        """
+        industry_ids: set[int] = set()
+        for c in customers:
+            industry = c.get("industry_id")
+            if industry:  # Odoo many2one: [id, display_name], False kalau kosong
+                industry_ids.add(industry[0])
+
+        if not industry_ids:
+            return {}, set()
+
+        external_codes = {
+            f"{CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX}{iid}" for iid in industry_ids
+        }
+        found = self.esuite.find_by_external_codes("customergroup", external_codes)
+
+        industry_id_to_group: dict[int, dict] = {}
+        for iid in industry_ids:
+            code = f"{CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX}{iid}"
+            record = found.get(code)
+            if record:
+                industry_id_to_group[iid] = {
+                    "id": record.get("id", ""),
+                    "name": record.get("name") or "",
+                }
+
+        unresolved = external_codes - set(found.keys())
+        return industry_id_to_group, unresolved
+
+    def _resolve_customer_groups(self, customer: dict, group_map: dict[int, dict]) -> list[dict]:
+        """
+        customer_groups[] utk payload eSuite -- SAAT INI cuma 1 sumber
+        (res.partner.industry_id), TAPI ditulis sbg LIST dari awal (bukan
+        dict tunggal) supaya kalau nanti ada sumber grouping tambahan,
+        tinggal di-extend di sini tanpa ubah bentuk payload/caller
+        (instruksi user 4 September 2026).
+
+        Return [] (bukan [{}] atau None) kalau industry_id kosong di Odoo
+        ATAU groupnya belum ke-resolve (belum pernah di-sync ke eSuite) --
+        caller (_to_esuite_payload()) TIDAK menyertakan key "customer_groups"
+        sama sekali kalau hasilnya [], supaya partial-merge upsert eSuite
+        tidak reset customer_groups yang mungkin sudah di-set manual lewat
+        /api/mapping/customer-grouping.
+        """
+        industry = customer.get("industry_id")
+        if not industry:
+            return []
+        group = group_map.get(industry[0])
+        return [group] if group else []
+
+    def _resolve_branch_map(self, customers: list[dict]) -> tuple[dict[int, dict], set[str]]:
+        """
+        Resolve res.partner.company_id (Odoo) -> Branch eSuite {id, name},
+        1x bulk pull utk SEMUA customer di batch ini (bukan per-customer) --
+        instruksi user 5 September 2026: sales.branchs[] di payload Customer
+        SEKARANG auto-mengikuti company_id customer di Odoo (BUKAN lagi
+        harus di-mapping manual satu-satu lewat /mapping/customer-sales
+        atau default branch_external_codes di
+        /mapping/customer-upsert-geo-branch-sales).
+
+        Branch eSuite = res.company (SSOT SAMA dgn branch_sync_service.py),
+        external_code "ODOO-COMPANY-{company_id}". Field "external_code"
+        Branch NESTED di "basic_info.external_code" (BUKAN top-level spt
+        Product/Customer/Product-Category) -- TIDAK bisa pakai
+        EsuiteClient.find_by_external_codes() generik (gagal silent utk
+        Branch, root cause sudah ditemukan 18 Agustus 2026 di
+        pricelist_sync_service.py::_resolve_branches()). Pull-loop manual
+        yang SAMA DIDUPLIKASI ke sini (bukan cross-import, konsisten
+        convention "tiap service independen" project ini).
+
+        Kalau company_id kosong di Odoo ATAU company itu belum ke-push sbg
+        Branch ke eSuite (di luar IN_SCOPE_COMPANY_NAMES / belum pernah
+        di-/sync/branch), code-nya otomatis tidak ada di dict hasil --
+        caller (_resolve_branch()) return [] utk customer itu, key "sales"
+        TIDAK disisipkan sama sekali (partial-merge aman, keputusan user 5
+        September: customer TETAP ke-upsert normal tanpa sales, bukan
+        fail-fast). unresolved dilaporkan ke response oleh sync(), pola
+        sama _resolve_customer_group_map().
+
+        Return: (company_id_to_branch, unresolved_external_codes)
+        """
+        company_ids: set[int] = set()
+        for c in customers:
+            company = c.get("company_id")
+            if company:  # Odoo many2one: [id, display_name], False kalau kosong
+                company_ids.add(company[0])
+
+        if not company_ids:
+            return {}, set()
+
+        codes_wanted = {f"{BRANCH_EXTERNAL_CODE_PREFIX}{cid}" for cid in company_ids}
+
+        found_by_code: dict[str, dict] = {}
+        page = 1
+        limit = 200
+        while True:
+            pulled = self.esuite.pull("branches", page=page, limit=limit)
+            for record in pulled.get("data") or []:
+                code = (record.get("basic_info") or {}).get("external_code")
+                if code in codes_wanted and record.get("id") and code not in found_by_code:
+                    found_by_code[code] = {"id": record["id"], "name": record.get("name") or ""}
+
+            meta = pulled.get("meta") or {}
+            total_page = meta.get("total_page", 1)
+            if page >= total_page or len(found_by_code) == len(codes_wanted):
+                break
+            page += 1
+
+        company_id_to_branch: dict[int, dict] = {}
+        for cid in company_ids:
+            code = f"{BRANCH_EXTERNAL_CODE_PREFIX}{cid}"
+            record = found_by_code.get(code)
+            if record:
+                company_id_to_branch[cid] = record
+
+        unresolved = codes_wanted - set(found_by_code.keys())
+        return company_id_to_branch, unresolved
+
+    def _resolve_branch(self, customer: dict, branch_map: dict[int, dict]) -> list[dict]:
+        """
+        sales.branchs[] utk payload eSuite -- auto dari res.partner.company_id
+        (lihat _resolve_branch_map()). SENGAJA HANYA branchs[] (TANPA
+        salesmans[]) -- instruksi eksplisit user 5 September 2026: salesman
+        tetap di-assign terpisah manual lewat endpoint /mapping/customer-sales
+        (BUKAN di sini). ⚠️ Ini beda dari aturan eSuite lama (24 Agustus
+        2026, dikonfirmasi dev eSuite) bahwa branchs & salesmans dalam
+        "sales" WAJIB di-set bersamaan -- BELUM ditest live apakah eSuite
+        terima branchs-only lewat endpoint /sync/customers ini (beda
+        endpoint dari /mapping/customer-sales yang sudah terbukti perlu
+        keduanya, lihat customer_sales_mapping_endpoint.md).
+
+        Return [] (bukan [{}]) kalau company_id kosong ATAU belum
+        ke-resolve -- caller (_to_esuite_payload()) TIDAK menyertakan key
+        "sales" sama sekali kalau hasilnya [], konsisten dgn pola
+        _resolve_customer_groups().
+        """
+        company = customer.get("company_id")
+        if not company:
+            return []
+        branch = branch_map.get(company[0])
+        return [branch] if branch else []
 
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
@@ -317,8 +556,8 @@ class CustomerSyncService:
             )
         return mapped
 
-    def _to_esuite_payload(self, customer: dict) -> dict:
-        return {
+    def _to_esuite_payload(self, customer: dict, group_map: dict[int, dict] | None = None, branch_map: dict[int, dict] | None = None) -> dict:
+        payload = {
             "name": customer["name"],
             # external_code = key upsert/delete di eSuite -- prefix "ODOO-PARTNER-"
             # konsisten dengan pola prefix entity lain (ODOO-COMPANY-, ODOO-PROD-).
@@ -366,6 +605,30 @@ class CustomerSyncService:
             # administrative_level (sengaja TIDAK dikirim, PENDING vendor).
             "addresses": [self._to_esuite_address(customer)],
         }
+
+        # customer_groups -- auto-resolve dari res.partner.industry_id (4
+        # September 2026, lihat _resolve_customer_groups()). Key HANYA
+        # disisipkan kalau ada hasil ([]  -> key tidak ditambah sama sekali,
+        # BUKAN dikirim customer_groups: [] eksplisit) -- partial-merge
+        # eSuite tidak akan reset customer_groups yang sudah ada kalau kita
+        # tidak punya data buat isi ulang.
+        groups = self._resolve_customer_groups(customer, group_map or {})
+        if groups:
+            payload["customer_groups"] = groups
+
+        # sales.branchs -- auto-resolve dari res.partner.company_id (5
+        # September 2026, lihat _resolve_branch()). SENGAJA HANYA branchs[]
+        # (TANPA salesmans[]) -- instruksi eksplisit user: salesman tetap
+        # di-assign terpisah manual lewat /mapping/customer-sales, BUKAN di
+        # sini. Key "sales" HANYA disisipkan kalau ada hasil ([] -> key
+        # tidak ditambah sama sekali), sama pola dgn customer_groups di
+        # atas -- partial-merge eSuite tidak akan reset sales yang sudah
+        # ada kalau kita tidak punya data buat isi ulang.
+        branch = self._resolve_branch(customer, branch_map or {})
+        if branch:
+            payload["sales"] = {"branchs": branch}
+
+        return payload
 
     def _to_esuite_address(self, customer: dict) -> dict:
         """

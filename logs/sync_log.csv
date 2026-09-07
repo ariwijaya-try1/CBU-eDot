@@ -83,3 +83,23 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-09-04T03:09:27.198518+00:00,product,upsert,1277,1,0,1,success,,
 2026-09-04T03:12:54.111984+00:00,product,upsert,1277,100,0,1,success,,
 2026-09-04T03:13:14.372942+00:00,product,upsert,1277,100,0,1,success,,
+2026-09-04T07:27:11.680548+00:00,customer,upsert,3004,1,0,1,success,,
+2026-09-04T07:55:08.752685+00:00,customer,upsert,3004,1,0,1,success,,
+2026-09-04T07:55:14.980515+00:00,customer,upsert,3004,1,0,1,success,,
+2026-09-04T07:56:13.071939+00:00,customer,upsert,3004,1,0,1,success,,
+2026-09-04T07:56:42.036152+00:00,customer,upsert,3004,2,0,1,success,,
+2026-09-04T08:35:43.772605+00:00,customer,upsert,211,10,0,1,success,,
+2026-09-05T00:09:20.307506+00:00,customer,upsert,3006,20,0,1,success,,
+2026-09-05T00:10:04.621607+00:00,customer,upsert,213,50,0,1,success,,
+2026-09-05T00:10:53.057963+00:00,customer,upsert,213,213,0,1,success,,
+2026-09-05T00:12:06.446255+00:00,customer,upsert,213,213,0,1,success,,
+2026-09-05T01:10:45.511791+00:00,customer,upsert,3006,1,0,1,success,,
+2026-09-05T01:58:20.133221+00:00,customer,upsert,3006,1,0,1,success,,
+2026-09-05T01:58:40.566176+00:00,customer,upsert,3006,5,0,1,success,,
+2026-09-05T02:01:22.793675+00:00,customer,upsert,213,213,0,1,success,,
+2026-09-05T03:24:34.160797+00:00,customer,upsert,3006,3006,0,4,success,,
+2026-09-05T03:28:36.783650+00:00,product,upsert,1279,1279,0,1,success,,
+2026-09-07T00:18:48.069273+00:00,stock-matrix,upsert,1022,30,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-09-07T00:20:23.267986+00:00,stock-matrix,upsert,1022,30,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-09-07T00:20:52.983931+00:00,stock-matrix,upsert,1022,30,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-09-07T00:21:03.316405+00:00,stock-matrix,upsert,1022,1022,0,1,success,,546 produk verified di eSuite tapi tidak ketemu di Odoo

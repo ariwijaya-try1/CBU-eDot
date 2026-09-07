@@ -79,12 +79,20 @@ class CustomerUpsertGeoBranchSalesService:
     def upsert(
         self,
         customer_id: int,
-        coordinates: str,
+        coordinates: str | None = None,
         branch_external_codes: str | None = None,
         salesman_ids: str | None = None,
         salesman_names: str | None = None,
     ) -> dict:
-        latitude, longitude = self._parse_coordinates(coordinates)
+        # geo OPSIONAL -- kalau coordinates kosong (mass update sales-only
+        # masa pre-live, instruksi user 7 September 2026), latitude/longitude
+        # tetap None dan _to_esuite_payload() TIDAK menambahkan key
+        # "addresses" ke payload sama sekali (partial-merge upsert eSuite,
+        # sama prinsip dengan "sales" di bawah -- geo/address existing di
+        # eSuite tidak ikut ter-reset).
+        latitude = longitude = None
+        if coordinates:
+            latitude, longitude = self._parse_coordinates(coordinates)
 
         customers = self.odoo.get_customers(ids=[customer_id])
         if not customers:
@@ -122,6 +130,7 @@ class CustomerUpsertGeoBranchSalesService:
             "external_code": payload_item["external_code"],
             "latitude": latitude,
             "longitude": longitude,
+            "geo_included": latitude is not None,
             "sales_included": sales_included,
             "payload_sent": [payload_item],
             "esuite_response": esuite_result,
@@ -192,21 +201,10 @@ class CustomerUpsertGeoBranchSalesService:
 
         return re.sub(r"\D", "", value or "")
 
-    def _to_esuite_payload(self, customer: dict, latitude: float, longitude: float) -> dict:
-        address = {
-            "id": "",
-            "address_type": ADDRESS_TYPE,
-            "street_address": customer.get("street") or "",
-            "country": COUNTRY,
-            "is_primary_address": True,
-            # lat/long -- SELALU dari input manual endpoint ini (beda dari
-            # CustomerSyncService._to_esuite_address() yang truthy-check
-            # partner_latitude/partner_longitude Odoo).
-            "longitude": longitude,
-            "latitude": latitude,
-        }
-
-        return {
+    def _to_esuite_payload(
+        self, customer: dict, latitude: float | None, longitude: float | None
+    ) -> dict:
+        payload = {
             "name": customer["name"],
             "external_code": f"{EXTERNAL_CODE_PREFIX}{customer['id']}",
             "type": self._resolve_customer_type(customer.get("company_type")),
@@ -220,8 +218,31 @@ class CustomerUpsertGeoBranchSalesService:
             "entity_type": "customer",
             "phone": self._only_digits(customer.get("phone")),
             "email": customer.get("email") or "",
-            "addresses": [address],
         }
+
+        # addresses OPSIONAL -- kalau latitude/longitude tidak diisi (coordinates
+        # kosong di endpoint), key "addresses" TIDAK ditambahkan ke payload sama
+        # sekali. Partial-merge upsert eSuite tetap berlaku di level TOP, jadi
+        # address/geo existing (kalau ada) TIDAK ikut ter-reset -- sama prinsip
+        # dengan "sales" di upsert(). Dipakai untuk mass update sales-only masa
+        # pre-live (instruksi user 7 September 2026).
+        if latitude is not None and longitude is not None:
+            payload["addresses"] = [
+                {
+                    "id": "",
+                    "address_type": ADDRESS_TYPE,
+                    "street_address": customer.get("street") or "",
+                    "country": COUNTRY,
+                    "is_primary_address": True,
+                    # lat/long -- SELALU dari input manual endpoint ini (beda dari
+                    # CustomerSyncService._to_esuite_address() yang truthy-check
+                    # partner_latitude/partner_longitude Odoo).
+                    "longitude": longitude,
+                    "latitude": latitude,
+                }
+            ]
+
+        return payload
 
     # ------------------------------------------------------------------
     # Sales (branch+salesman) -- IDENTIK dengan
