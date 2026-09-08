@@ -45,11 +45,13 @@ def sync_order_history(
         ge=1,
         le=500,
         description=(
-            "OPSIONAL -- berapa banyak order TERBARU per customer yang di-scan "
-            "buat cari 1 yang invoice_status masuk daftar eligible (\"to invoice\" "
-            "atau \"invoiced\", lihat ELIGIBLE_INVOICE_STATUSES di service). "
-            "Default 50. Perbesar kalau outlet tertentu tidak ketemu order yang "
-            "cocok dalam 50 order terbarunya."
+            "OPSIONAL -- berapa banyak order TERBARU per customer yang di-scan. "
+            "SEMUA order di dalam window ini yang invoice_status masuk daftar "
+            "eligible (\"to invoice\" atau \"invoiced\", lihat "
+            "ELIGIBLE_INVOICE_STATUSES di service) ikut DIKIRIM (bukan cuma 1, "
+            "direvisi 7 September 2026 -- 1 outlet lama bisa hasilkan banyak "
+            "order sekaligus). Default 50. Perbesar kalau butuh histori lebih "
+            "jauh ke belakang per outlet."
         ),
     ),
     salesman_external_code: str | None = Query(
@@ -57,8 +59,10 @@ def sync_order_history(
         description=(
             "OPSIONAL -- override external_code Salesman utk SEMUA order di "
             "panggilan ini (default: constant SALESMAN_EXTERNAL_CODE di service, "
-            "\"202600002\"). Berguna buat testing kode salesman lain (mis. "
-            "\"SALES-DUMMY-DEV\", \"202600003\", \"202600004\") tanpa ubah kode."
+            "\"SALES-DUMMY-DEV\"). PENTING (7 September 2026): ini WAJIB "
+            "external_code ASLI akun Salesman di eSuite, BUKAN employee_id "
+            "(\"2026000xx\") -- 2 field terpisah, kirim employee_id di sini "
+            "SELALU \"not resolved\" walau akunnya valid/aktif."
         ),
     ),
     dry_run: bool = Query(
@@ -70,6 +74,21 @@ def sync_order_history(
             "atau tool lain. `esuite_response` selalu null saat dry_run=True."
         ),
     ),
+    batch_size: int | None = Query(
+        default=None,
+        ge=1,
+        le=100,
+        description=(
+            "OPSIONAL -- berapa order per-call ke eSuite (batas HARD eSuite: "
+            "100/request, dev jawaban #7). Default 100. Perkecil (mis. 20) "
+            "buat rollout bertahap/sample dulu sebelum full batch. Endpoint "
+            "ini OTOMATIS chunk & push berkali-kali kalau order yang cocok "
+            "lebih banyak dari batch_size -- caller TIDAK PERLU manual bagi "
+            "customer_ids sendiri. Ada jeda antar batch (lihat "
+            "BATCH_DELAY_SECONDS di service) -- response `batch_count` bisa "
+            "dicek dulu lewat dry_run=true sebelum push beneran."
+        ),
+    ),
 ):
     """
     v1 (28 Agustus 2026) -- push riwayat order ke webhook eDot BARU
@@ -77,32 +96,44 @@ def sync_order_history(
     yang sudah ada di Postman collection, lihat project memory
     order_history_import.md utk detail lengkap perbedaan & histori keputusan).
 
-    Scope v1 (PROVISIONAL, bisa di-expand nanti): per outlet/customer,
-    HANYA 1 order TERAKHIR yang `invoice_status` masuk `ELIGIBLE_INVOICE_STATUSES`
+    Scope (DIREVISI 7 September 2026, sesuai kebutuhan tim sales -- lihat
+    project memory order_history_import.md): per outlet/customer, SEMUA order
+    yang `invoice_status` masuk `ELIGIBLE_INVOICE_STATUSES`
     (`["to invoice", "invoiced"]` per 28 Agustus 2026, lihat service utk daftar
-    terkini) yang dikirim -- BUKAN full history. Kalau 1 customer tidak punya
-    order dengan status yang cocok dalam `lookback_limit` order terbarunya,
-    customer itu di-skip LOKAL (tidak dikirim ke eSuite sama sekali, muncul di
-    `local_skipped` pada response) -- beda dari skip yang dilaporkan eSuite
-    sendiri (`esuite_response.data.results[]`, mis. karena product/salesman
-    belum ke-resolve).
+    terkini) DALAM WINDOW `lookback_limit` dikirim -- BUKAN cuma 1 order
+    terakhir seperti versi awal. Tujuannya sales bisa lihat riwayat order
+    outlet lewat filter-by-outlet di app mobile eDot. Kalau 1 customer tidak
+    punya SATU PUN order dengan status yang cocok dalam `lookback_limit` order
+    terbarunya, customer itu di-skip LOKAL (tidak dikirim ke eSuite sama
+    sekali, muncul di `local_skipped` pada response) -- beda dari skip yang
+    dilaporkan eSuite sendiri (`esuite_response.data.results[]`, mis. karena
+    product/salesman belum ke-resolve).
 
     Salesman: SEMUA order pakai 1 external_code TETAP (lihat konstanta
     `SALESMAN_EXTERNAL_CODE` di service) -- TIDAK di-mapping presisi ke
-    salesperson asli Odoo (dikonfirmasi user, cukup salah satu dari 3 akun
-    test real yang dikasih dev, karena visibility order terakhir outlet di
-    app eWork tidak digating per-salesperson). Bisa di-override per-call lewat
-    query param `salesman_external_code` (mis. buat coba kode lain kalau
-    default-nya "not resolved" di eSuite, lihat project memory
-    order_history_import.md Test live #3).
+    salesperson asli Odoo (dikonfirmasi user, karena visibility order terakhir
+    outlet di app eWork tidak digating per-salesperson). Bisa di-override
+    per-call lewat query param `salesman_external_code` -- WAJIB external_code
+    ASLI akun (bukan employee_id, lihat project memory order_history_import.md
+    section 7 September 2026 utk root cause lengkap).
 
     Response HTTP 200 dari endpoint ini TIDAK BERARTI semua order sukses
     ke-import ke eSuite -- WAJIB baca `esuite_response.data.results[]` per
     order (`imported`/`skipped`+`reason`).
 
+    Batching (7 September 2026, BARU): kalau jumlah order yang cocok lebih
+    banyak dari `batch_size` (default/max 100, batas eSuite), endpoint ini
+    OTOMATIS chunk & push berkali-kali (dgn jeda antar batch) -- caller
+    TIDAK PERLU bagi `customer_ids` manual. `esuite_response.data.summary`/
+    `.results[]` tetap 1 shape gabungan dari SEMUA batch (kompatibel dgn
+    consumer lama); detail per-batch (termasuk batch yang gagal di level
+    call, bukan skip eSuite) ada di field baru `batches[]`.
+
     Set `dry_run=true` buat lihat/ambil payload TANPA push ke eSuite -- field
     `payload` di response berisi body persis yang AKAN dikirim, siap
-    di-copy-paste ke Postman/tool lain buat testing manual.
+    di-copy-paste ke Postman/tool lain buat testing manual. Field `batch_count`
+    ikut muncul di dry_run supaya bisa cek dulu berapa batch yang akan
+    dipakai sebelum push beneran.
     """
     parsed_ids = _parse_customer_ids(customer_ids)
     return service.sync(
@@ -110,4 +141,5 @@ def sync_order_history(
         lookback_limit=lookback_limit,
         salesman_external_code=salesman_external_code,
         dry_run=dry_run,
+        batch_size=batch_size,
     )

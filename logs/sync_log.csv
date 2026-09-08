@@ -113,3 +113,13 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-09-07T03:31:10.585712+00:00,order_history,import,6,0,4,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 2 customer di-skip lokal (tidak ada order match)"
 2026-09-07T03:32:01.991201+00:00,order_history,import,6,0,4,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 2 customer di-skip lokal (tidak ada order match)"
 2026-09-07T03:32:34.849008+00:00,order_history,import,6,0,4,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 2 customer di-skip lokal (tidak ada order match)"
+2026-09-07T03:55:10.251586+00:00,order_history,import,3,0,3,,failed,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match)"
+2026-09-07T06:43:25.850060+00:00,order_history,import,1,1,0,,success,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match), 1 batch @ max 100 order/batch"
+2026-09-07T06:45:57.582862+00:00,order_history,import,3,2,0,,success,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 1 customer di-skip lokal (tidak ada order match), 1 batch @ max 100 order/batch"
+2026-09-08T01:23:15.987054+00:00,customer,upsert,218,218,0,1,success,,
+2026-09-08T01:23:49.689307+00:00,customer,upsert,3011,3011,0,4,success,,
+2026-09-08T01:34:51.492216+00:00,customer,upsert,3011,1,0,1,success,,
+2026-09-08T01:35:35.427795+00:00,customer,upsert,3011,2,0,1,success,,
+2026-09-08T01:37:24.499959+00:00,customer,upsert,3011,20,0,1,success,,
+2026-09-08T01:38:57.622298+00:00,customer,upsert,3011,3011,0,4,success,,
+2026-09-08T02:33:14.040889+00:00,pricelist,upsert,,0,267,1,failed,,51 pricelist di-skip (belum ada produk valid di eSuite)
