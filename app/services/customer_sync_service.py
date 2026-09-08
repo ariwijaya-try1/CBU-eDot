@@ -78,6 +78,16 @@ CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX = "ODOO-CONTACT-INDUSTRY-"
 # berubah, prefix ini WAJIB ikut diubah juga.
 BRANCH_EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
 
+# Prefix external_code Pricelist -- HARUS SAMA PERSIS dengan
+# EXTERNAL_CODE_PREFIX di pricelist_sync_service.py (didefinisikan ulang di
+# sini, bukan import silang, konsisten dgn pola BRANCH_EXTERNAL_CODE_PREFIX
+# di atas). Dipakai 8 September 2026 buat AUTO-RESOLVE customer_price_list
+# dari res.partner.property_product_pricelist Odoo saat upsert Customer
+# (pola sama customer_groups/sales.branchs -- 1 pricelist harus di-/sync/
+# pricelist dulu sebelum bisa auto-resolve di sini). KALAU prefix di
+# pricelist_sync_service.py berubah, prefix ini WAJIB ikut diubah juga.
+PRICELIST_EXTERNAL_CODE_PREFIX = "ODOO-PRICELIST-"
+
 
 class CustomerSyncService:
     def __init__(self):
@@ -150,7 +160,15 @@ class CustomerSyncService:
         # lihat _resolve_branch_map() utk detail.
         branch_map, unresolved_branch_codes = self._resolve_branch_map(customers)
 
-        payload = [self._to_esuite_payload(c, group_map, branch_map) for c in customers]
+        # customer_price_list auto-resolve (8 September 2026) -- sama pola
+        # dgn group_map/branch_map di atas: 1x bulk lookup utk SEMUA
+        # customer di batch ini, lihat _resolve_price_list_map() utk detail.
+        price_list_map, unresolved_price_lists = self._resolve_price_list_map(customers)
+
+        payload = [
+            self._to_esuite_payload(c, group_map, branch_map, price_list_map)
+            for c in customers
+        ]
 
         # Batching -- REVISI 11 Agustus 2026: user konfirmasi bulk upsert di atas
         # ~2000 record kena 502. Push sekarang selalu lewat batch (bukan 1 request
@@ -231,6 +249,18 @@ class CustomerSyncService:
         # (keputusan user 5 September 2026, bukan fail-fast).
         if unresolved_branch_codes:
             result["branch_unresolved_companies"] = sorted(unresolved_branch_codes)
+
+        # customer_price_list_unresolved -- HANYA muncul kalau ADA
+        # property_product_pricelist yang direferensikan customer di batch
+        # ini TAPI Pricelist-nya belum ketemu di eSuite (belum pernah
+        # di-/sync/pricelist ATAU ke-skip krn skipped_pricelist_no_valid_product).
+        # Customer TETAP ke-upsert (field lain jalan normal), cuma key
+        # "customer_price_list" utk row itu di-skip -- dilaporkan di sini,
+        # pola sama customer_group_unresolved_industries/
+        # branch_unresolved_companies (keputusan user 8 September 2026,
+        # bukan fail-fast).
+        if unresolved_price_lists:
+            result["customer_price_list_unresolved"] = sorted(unresolved_price_lists)
 
         # name_search -- HANYA ada kalau param `names` dipakai (additive,
         # tidak mengubah struktur response untuk pemakaian external_codes/
@@ -511,6 +541,94 @@ class CustomerSyncService:
         branch = branch_map.get(company[0])
         return [branch] if branch else []
 
+    def _resolve_price_list_map(self, customers: list[dict]) -> tuple[dict[int, dict], set[str]]:
+        """
+        Resolve res.partner.property_product_pricelist (Odoo) -> Pricelist
+        eSuite {id, name} (pola sama _resolve_customer_group_map()/
+        _resolve_branch_map()) -- instruksi user 8 September 2026: payload
+        Customer upsert sekarang bawa "customer_price_list" (field asli
+        dari dev, BUKAN "price_list" seperti contoh lama di PDF v2.0.0 --
+        lihat pricelist_progress.md).
+
+        🆕 9 September 2026 -- DIUBAH dari bulk-scan (EsuiteClient.
+        find_by_external_codes(), narik SEMUA pricelist per halaman lalu
+        filter manual di sisi kita) jadi 1x GET/pricelists?external_code=
+        <code> PER pricelist_id yang benar2 dibutuhkan batch ini (lewat
+        EsuiteClient.pull_by_param(), method generik yang sudah ada,
+        dipakai jg oleh CustomerSalesMappingService). CONFIRMED LIVE oleh
+        user (9 September 2026): filter ini beneran server-side
+        (meta.total=1, BUKAN "return semua lalu kita saring" seperti
+        find_by_external_codes()) -- fix root cause utk 2 masalah
+        sekaligus: (1) `ResourceExhausted` gRPC eSuite (dulu narik ratusan
+        pricelist bersamaan, tiap record bawa nested products[] ratusan
+        item, gampang lewat limit gRPC 4MB mereka), (2) lambat (dulu >20x
+        request page_size=10 utk nyapu semua halaman kalau ada 1 saja code
+        yang unresolved). Sekarang cuma N request (N = jumlah pricelist
+        UNIK yang dipakai customer di batch ini, biasanya jauh lebih
+        sedikit drpd jumlah customer), masing2 balik PERSIS 1 record kecil.
+
+        ⚠️ CATATAN: response GET pricelist eSuite TIDAK menampilkan balik
+        field "external_code" record itu sendiri (selalu kosong "" --
+        bug tampilan di sisi eSuite, SUDAH direquest user ke dev utk
+        diperbaiki). Karena filter query-nya sendiri TERBUKTI benar
+        (dikonfirmasi via meta.total), kita PERCAYA hasil data[0] apa
+        adanya dan TIDAK re-match ke field external_code di record (beda
+        dari pola lama find_by_external_codes() yang cross-check
+        record.get("external_code") -- kalau dipertahankan di sini malah
+        selalu gagal match krn field itu kosong).
+
+        Kalau property_product_pricelist kosong di Odoo ATAU pricelist itu
+        belum ke-push ke eSuite (belum pernah di-/sync/pricelist ATAU
+        ke-skip krn skipped_pricelist_no_valid_product), GET-nya balik
+        data kosong -- caller (_resolve_price_list()) return None utk
+        customer itu, key "customer_price_list" TIDAK disisipkan sama
+        sekali (partial-merge aman, customer tetap ke-upsert normal tanpa
+        pricelist, bukan fail-fast). unresolved dilaporkan ke response
+        oleh sync().
+
+        Return: (pricelist_id_to_entry, unresolved_external_codes)
+        """
+        pricelist_ids: set[int] = set()
+        for c in customers:
+            pricelist = c.get("property_product_pricelist")
+            if pricelist:  # Odoo many2one: [id, display_name], False kalau kosong
+                pricelist_ids.add(pricelist[0])
+
+        if not pricelist_ids:
+            return {}, set()
+
+        pricelist_id_to_entry: dict[int, dict] = {}
+        unresolved: set[str] = set()
+        for pid in pricelist_ids:
+            code = f"{PRICELIST_EXTERNAL_CODE_PREFIX}{pid}"
+            result = self.esuite.pull_by_param("pricelists", "external_code", code)
+            records = result.get("data") or []
+            if records:
+                record = records[0]
+                pricelist_id_to_entry[pid] = {"id": record.get("id", ""), "name": record.get("name") or ""}
+            else:
+                unresolved.add(code)
+
+        return pricelist_id_to_entry, unresolved
+
+    def _resolve_price_list(self, customer: dict, price_list_map: dict[int, dict]) -> dict | None:
+        """
+        customer_price_list utk payload eSuite -- auto dari
+        res.partner.property_product_pricelist (lihat
+        _resolve_price_list_map()). BEDA dari customer_groups/sales.branchs
+        (list) -- ini SATU OBJECT tunggal, konsisten dgn aturan bisnis "1
+        customer = 1 pricelist aktif" (sama seperti
+        customer_pricelist_mapping_service.py).
+
+        Return None kalau property_product_pricelist kosong ATAU belum
+        ke-resolve -- caller (_to_esuite_payload()) TIDAK menyertakan key
+        "customer_price_list" sama sekali kalau None.
+        """
+        pricelist = customer.get("property_product_pricelist")
+        if not pricelist:
+            return None
+        return price_list_map.get(pricelist[0])
+
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
         Parse "ODOO-PARTNER-1,ODOO-PARTNER-2" -> [1, 2] -- pola sama dengan
@@ -556,7 +674,13 @@ class CustomerSyncService:
             )
         return mapped
 
-    def _to_esuite_payload(self, customer: dict, group_map: dict[int, dict] | None = None, branch_map: dict[int, dict] | None = None) -> dict:
+    def _to_esuite_payload(
+        self,
+        customer: dict,
+        group_map: dict[int, dict] | None = None,
+        branch_map: dict[int, dict] | None = None,
+        price_list_map: dict[int, dict] | None = None,
+    ) -> dict:
         payload = {
             "name": customer["name"],
             # external_code = key upsert/delete di eSuite -- prefix "ODOO-PARTNER-"
@@ -637,6 +761,19 @@ class CustomerSyncService:
         branch = self._resolve_branch(customer, branch_map or {})
         if branch:
             payload["sales"] = {"branchs": branch}
+
+        # customer_price_list -- auto-resolve dari
+        # res.partner.property_product_pricelist (8 September 2026, lihat
+        # _resolve_price_list()). SATU OBJECT (BUKAN list) -- beda dari
+        # customer_groups/sales.branchs, konsisten dgn field name asli dev
+        # "customer_price_list" (BUKAN "price_list" spt contoh lama PDF
+        # v2.0.0, lihat pricelist_progress.md). Key HANYA disisipkan kalau
+        # ada hasil (None -> key tidak ditambah sama sekali) -- partial-merge
+        # eSuite tidak akan reset customer_price_list yang sudah ada kalau
+        # kita tidak punya data buat isi ulang.
+        price_list_entry = self._resolve_price_list(customer, price_list_map or {})
+        if price_list_entry:
+            payload["customer_price_list"] = price_list_entry
 
         return payload
 

@@ -51,9 +51,15 @@ EFFECTIVE_DATE_DEFAULT = {"timezone": "Asia/Jakarta", "start_date": 0, "end_date
 # Odoo tidak punya sumber data sales_channel per pricelist.
 SALES_CHANNEL_DEFAULT = [{"id": "6a695cc1917e8fc836359461", "name": "esuite"}]
 
-# Default batch_size KALAU tidak diisi -- None (1 batch = semua pricelist
-# sekaligus), pola sama product_sync_service.py/stock_sync_service.py.
-DEFAULT_BATCH_SIZE = None
+# Default batch_size KALAU tidak diisi -- REVISI 8 September 2026: SEMPAT
+# None (1 batch = semua pricelist sekaligus, pola sama product_sync_service.py/
+# stock_sync_service.py), TAPI beda dari Product/Stock: 1 record Pricelist
+# bisa bawa products[] nested ratusan item. Full sync live (267 pricelist
+# lolos guard) dalam 1 batch kena "413 Request Entity Too Large" dari nginx
+# eSuite. batch_size=10 DIKONFIRMASI LIVE aman (27 batch, 267/267 sukses, 0
+# gagal) -- sekarang default 10 (bukan None) supaya full-sync ke depan tidak
+# perlu isi param manual. Override tetap bisa lewat query param batch_size.
+DEFAULT_BATCH_SIZE = 10
 
 
 class PricelistSyncService:
@@ -441,8 +447,11 @@ class PricelistSyncService:
             )
 
         # Batching -- pola sama product_sync_service.py/stock_sync_service.py:
-        # opsional, default None -> 1 batch semua pricelist sekaligus.
-        size = batch_size or len(payload)
+        # opsional, default DEFAULT_BATCH_SIZE kalau tidak diisi (REVISI 8
+        # September 2026 -- sebelumnya jatuh ke len(payload)/1 batch semua
+        # sekaligus, itu penyebab 413, lihat komentar DEFAULT_BATCH_SIZE di
+        # atas).
+        size = batch_size or DEFAULT_BATCH_SIZE
         batches = [payload[i : i + size] for i in range(0, len(payload), size)]
 
         batch_results = []

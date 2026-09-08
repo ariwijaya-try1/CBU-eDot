@@ -482,16 +482,14 @@ class OdooClient:
         beda dari Branch yang cuma ~3 record. Lihat
         customer_sync_service.py::_to_esuite_address().
 
-        property_product_pricelist (26 Agustus 2026, DIAGNOSTIC-ONLY, TIDAK
-        dipakai _to_esuite_payload() -- lihat customer_sync_service.py, field
-        di sana di-assign eksplisit key-by-key jadi field baru ini otomatis
-        AMAN, tidak ikut ke-push kemana-mana sampai memang ditambahkan).
-        Field standar Odoo (many2one ke product.pricelist) -- kandidat SSOT
-        buat Customer -> Pricelist mapping (Task #4, PDF 9.8) yang lebih
-        reliable daripada mapping manual/parsing nama pricelist. Ditambahkan
-        supaya bisa dicek dulu lewat GET /odoo/customer apakah field ini
-        ke-populate di instance Odoo CBU (mis. utk outlet PEPITO) sebelum
-        diputuskan mau dipakai buat automasi mapping atau tidak.
+        property_product_pricelist (26 Agustus 2026, awalnya
+        DIAGNOSTIC-ONLY -- lihat pricelist_progress.md). REVISI 8 September
+        2026: SEKARANG DIPAKAI AKTIF oleh
+        customer_sync_service.py::_resolve_price_list_map()/_resolve_price_list()
+        buat AUTO-RESOLVE key "customer_price_list" saat upsert Customer
+        (pola sama industry_id -> customer_groups, company_id ->
+        sales.branchs di bawah). Field standar Odoo (many2one ke
+        product.pricelist).
 
         industry_id (4 September 2026) -- Many2one ke res.partner.industry,
         dipakai customer_sync_service.py buat AUTO-RESOLVE customer_groups[]
