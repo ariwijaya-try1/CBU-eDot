@@ -164,15 +164,15 @@ class PricelistSyncService:
       eSuite, lihat _pull_esuite_product_map()) -- user klarifikasi
       base_price itu HARGA DASAR produk, BUKAN cost/harga beli (yang tetap
       terpisah, tetap hardcode 0 di product_sync_service.py, tidak
-      terpengaruh). `store_price` SEKARANG SENGAJA di-hardcode 0 utk FASE 1
-      -- asumsi user: field ini merepresentasikan harga dari
-      provider/vendor ke CBU (mirip konsep cost), bukan harga jual
-      differentiated per customer/pricelist. ⚠️ KONSEKUENSI: harga jual
-      SEBENARNYA yang beda per customer/toko (`fixed_price` item Odoo,
-      variable `store_price` lokal di sync() TETAP dihitung tapi TIDAK
-      dikirim) BELUM tersalur ke eSuite di Fase 1 ini -- PENDING keputusan
-      Fase 2 soal bagaimana diferensiasi harga per pricelist disalurkan.
-      Detail lengkap di pricelist_progress.md.
+      terpengaruh). `store_price` SEMPAT di-hardcode 0 utk FASE 1 (asumsi
+      lama: field ini = harga provider ke CBU) -- 🆕 8 September 2026
+      DIREVERT: dikonfirmasi user via admin Odoo bahwa `store_price` =
+      field `fixed_price` model `product.pricelist.item`, yaitu harga jual
+      per customer/pricelist yang SEMULA memang dikirim (sebelum fix 2
+      September). Jadi diferensiasi harga per customer/toko SEKARANG
+      tersalur lagi ke eSuite via `store_price`/`min_store_price`/
+      `max_store_price` = fixed_price item Odoo. Detail lengkap di
+      pricelist_progress.md.
       ~~Catatan lama (SEBELUM 2 September, base_price=0 utk semua, PENDING
       konfirmasi vendor) -- SUDAH DIGANTIKAN keputusan di atas.~~
 
@@ -353,9 +353,11 @@ class PricelistSyncService:
                 resolved = esuite_products.get(row["product_id"])
                 if not resolved:
                     continue
-                # 🆕 2 September 2026: fixed_price Odoo TETAP dihitung ke
-                # variable ini (buat referensi Fase 2 nanti), TAPI TIDAK
-                # dikirim ke payload lagi -- lihat catatan FIX di bawah.
+                # 🆕 8 September 2026 (REVERT, dikonfirmasi user via admin
+                # Odoo: store_price = field `fixed_price` model
+                # product.pricelist.item) -- fixed_price Odoo DIKIRIM LAGI
+                # sbg store_price, menggantikan hardcode 0 (2 September).
+                # Lihat pricelist_progress.md utk detail keputusan.
                 store_price = row["price"]
                 # name/sku/external_code (26 Agustus 2026, FIX; direvisi lagi
                 # 2 September 2026) -- lihat docstring kelas bagian "FIX 26
@@ -375,15 +377,15 @@ class PricelistSyncService:
                 # punya default_code.
                 #
                 # "base_price"/"store_price" (2 September 2026, FIX,
-                # DIKONFIRMASI USER -- merevisi catatan PENDING sebelumnya):
+                # DIKONFIRMASI USER; store_price DIREVERT 8 September 2026):
                 # base_price = harga dasar (list_price) produk, reuse dari
                 # `resolved["base_price"]` (_pull_esuite_product_map(), hasil
-                # /sync/product yang sudah benar). store_price DISENGAJAKAN
-                # 0 utk FASE 1 (asumsi user: field ini = harga provider ke
-                # CBU, bukan harga jual per customer) -- `store_price` lokal
-                # (fixed_price Odoo) TETAP dihitung di atas tapi TIDAK
-                # dikirim, PENDING Fase 2. Lihat docstring kelas & catatan
-                # pricelist_progress.md utk detail lengkap.
+                # /sync/product yang sudah benar). store_price = fixed_price
+                # item Odoo (`store_price` lokal di atas) -- dikonfirmasi
+                # user via admin: field Odoo `product.pricelist.item.fixed_price`
+                # itulah store_price, jadi harga jual per customer/pricelist
+                # SUDAH tersalur lewat sini (bukan lagi hardcode 0). Lihat
+                # docstring kelas & pricelist_progress.md utk detail lengkap.
                 base_price = resolved.get("base_price") or 0
                 product_entries.append(
                     {
@@ -396,13 +398,13 @@ class PricelistSyncService:
                                 "id": resolved["variant_id"],
                                 "name": resolved["name"],
                                 "base_price": base_price,
-                                "store_price": 0,
+                                "store_price": store_price,
                             }
                         ],
                         "min_base_price": base_price,
                         "max_base_price": base_price,
-                        "min_store_price": 0,
-                        "max_store_price": 0,
+                        "min_store_price": store_price,
+                        "max_store_price": store_price,
                     }
                 )
 
