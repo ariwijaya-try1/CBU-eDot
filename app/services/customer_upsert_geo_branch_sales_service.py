@@ -344,18 +344,27 @@ class CustomerUpsertGeoBranchSalesService:
         """
         Cek apakah customer ini SUDAH punya sales.branchs[] di eSuite --
         dipakai KHUSUS guard mass update salesman-only (7 September 2026,
-        lihat upsert()). GET /customers by external_code (reuse
-        EsuiteClient.find_by_external_codes() generik, sama pola dgn
-        resolve Pricelist/Branch di service lain).
+        lihat upsert()). GET /customers by external_code.
+
+        🆕 9 September 2026 -- DIUBAH dari EsuiteClient.find_by_external_codes()
+        (full-scan, narik semua customer per halaman lalu filter manual) ke
+        1x GET /customers?external_code=<code> langsung lewat
+        EsuiteClient.pull_by_param() (filter SERVER-SIDE, CONFIRMED LIVE oleh
+        user 9 September 2026 -- lihat customer_sync_service.py::
+        _resolve_price_list_map() utk detail lengkap alasan perubahan pola
+        ini). Sama seperti kasus pricelist, GET /customers by external_code
+        di sini SELALU 1 kode saja per panggilan (bukan bulk), jadi ini
+        pengganti 1:1 yang aman.
 
         Return: list branchs[] apa adanya dari eSuite -- [] kalau customer
         belum ketemu di eSuite ATAU ketemu tapi belum py branch (caller yang
         putuskan mau treat sebagai gagal/lanjut).
         """
-        found = self.esuite.find_by_external_codes("customers", {external_code})
-        record = found.get(external_code)
-        if not record:
+        result = self.esuite.pull_by_param("customers", "external_code", external_code)
+        records = result.get("data") or []
+        if not records:
             return []
+        record = records[0]
         return (record.get("sales") or {}).get("branchs") or []
 
     def _resolve_salesmen(self, sid_list: list[str]) -> list[dict]:
