@@ -137,3 +137,15 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-09-08T09:31:15.641424+00:00,customer,upsert,3012,1,0,1,success,,
 2026-09-08T09:31:44.800058+00:00,customer,upsert,3012,10,0,1,success,,
 2026-09-08T09:33:51.245916+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T00:41:48.988295+00:00,pricelist,upsert,,267,0,27,success,,51 pricelist di-skip (belum ada produk valid di eSuite)
+2026-09-09T00:43:04.478615+00:00,customer,upsert,3014,3014,0,4,success,,
+2026-09-09T00:49:22.174054+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T00:49:31.174574+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T02:25:27.246606+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T02:33:44.084233+00:00,customer,upsert,3014,3014,0,4,success,,
+2026-09-09T02:37:06.242930+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T02:37:25.668638+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T02:38:09.949381+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T02:38:31.487918+00:00,customer,upsert,1,1,0,1,success,,
+2026-09-09T03:34:32.521089+00:00,order_history,import,1,4,0,,success,,"orders/import -- semua order/outlet (revisi scope 7 Sep 2026), invoice_status in ['to invoice', 'invoiced'], lookback 5, 0 customer di-skip lokal (tidak ada order match), 1 batch @ max 100 order/batch"
+2026-09-09T06:02:50.060210+00:00,customer,upsert,1,1,0,1,success,,

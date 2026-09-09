@@ -550,56 +550,83 @@ class CustomerSyncService:
         dari dev, BUKAN "price_list" seperti contoh lama di PDF v2.0.0 --
         lihat pricelist_progress.md).
 
-        🆕 9 September 2026 -- DIUBAH dari bulk-scan (EsuiteClient.
-        find_by_external_codes(), narik SEMUA pricelist per halaman lalu
-        filter manual di sisi kita) jadi 1x GET/pricelists?external_code=
-        <code> PER pricelist_id yang benar2 dibutuhkan batch ini (lewat
-        EsuiteClient.pull_by_param(), method generik yang sudah ada,
-        dipakai jg oleh CustomerSalesMappingService). CONFIRMED LIVE oleh
-        user (9 September 2026): filter ini beneran server-side
-        (meta.total=1, BUKAN "return semua lalu kita saring" seperti
-        find_by_external_codes()) -- fix root cause utk 2 masalah
-        sekaligus: (1) `ResourceExhausted` gRPC eSuite (dulu narik ratusan
-        pricelist bersamaan, tiap record bawa nested products[] ratusan
-        item, gampang lewat limit gRPC 4MB mereka), (2) lambat (dulu >20x
-        request page_size=10 utk nyapu semua halaman kalau ada 1 saja code
-        yang unresolved). Sekarang cuma N request (N = jumlah pricelist
-        UNIK yang dipakai customer di batch ini, biasanya jauh lebih
-        sedikit drpd jumlah customer), masing2 balik PERSIS 1 record kecil.
+        🆕🆕 9 September 2026 (FIX BUG "inconsistent pricelist") --
+        property_product_pricelist itu field company_dependent Odoo
+        (override per-company) -- pakai NILAI MENTAH-nya langsung dari
+        get_customers() (search_read TANPA context company) TERBUKTI BISA
+        SALAH (CONFIRMED LIVE, customer "12 KITCHEN & WINE": Odoo UI
+        company Sunshine nunjukin "FS 202500 Price List (IDR)",
+        get_customers() balikin pricelist id 39 = "MT 202502 CBU Price
+        List (IDR)" -- override company lain, BUKAN company milik
+        customer).
 
-        ⚠️ CATATAN: response GET pricelist eSuite TIDAK menampilkan balik
-        field "external_code" record itu sendiri (selalu kosong "" --
-        bug tampilan di sisi eSuite, SUDAH direquest user ke dev utk
-        diperbaiki). Karena filter query-nya sendiri TERBUKTI benar
-        (dikonfirmasi via meta.total), kita PERCAYA hasil data[0] apa
-        adanya dan TIDAK re-match ke field external_code di record (beda
-        dari pola lama find_by_external_codes() yang cross-check
-        record.get("external_code") -- kalau dipertahankan di sini malah
-        selalu gagal match krn field itu kosong).
+        ⚠️ Percobaan fix PERTAMA (baca ir.property langsung via
+        OdooClient.get_pricelist_overrides()) GAGAL live -- Odoo instance
+        ini error `ODOO_RPC_ERROR: "Object ir.property doesn't exist"`
+        (kemungkinan versi Odoo ini sudah migrasi penyimpanan field
+        company_dependent dari ir.property ke mekanisme lain, mis. kolom
+        JSONB langsung di tabel record). Method itu SUDAH DIHAPUS.
 
-        Kalau property_product_pricelist kosong di Odoo ATAU pricelist itu
-        belum ke-push ke eSuite (belum pernah di-/sync/pricelist ATAU
-        ke-skip krn skipped_pricelist_no_valid_product), GET-nya balik
-        data kosong -- caller (_resolve_price_list()) return None utk
-        customer itu, key "customer_price_list" TIDAK disisipkan sama
-        sekali (partial-merge aman, customer tetap ke-upsert normal tanpa
-        pricelist, bukan fail-fast). unresolved dilaporkan ke response
-        oleh sync().
+        FIX YANG BENAR (dipakai sekarang): pricelist_id yang BENAR
+        di-resolve ulang per PARTNER via OdooClient.get_pricelist_by_company()
+        -- kirim context Odoo standar (`allowed_company_ids`) per company
+        saat search_read res.partner, biar Odoo ORM SENDIRI yang resolve
+        company-dependent-nya (tidak bergantung ke mekanisme penyimpanan
+        internal apapun). Partner dikelompokkan dulu per company_id MILIK
+        MASING-MASING CUSTOMER (field yang sudah ditarik get_customers()
+        sejak fitur branch 5 September) sebelum dikirim ke method itu.
 
-        Return: (pricelist_id_to_entry, unresolved_external_codes)
+        ⚠️ Kalau customer_id TIDAK punya company_id (kosong di Odoo), ATAU
+        get_pricelist_by_company() tidak balikin pricelist utk partner itu
+        -- SENGAJA di-treat UNRESOLVED (customer_price_list TIDAK
+        dikirim), BUKAN fallback ke nilai default/company lain -- lebih
+        aman drpd salah assign pricelist lagi, konsisten pola
+        partial-merge project ini.
+
+        🆕 9 September 2026 (fix performa) -- lookup ke eSuite pakai 1x
+        GET /pricelists?external_code=<code> PER pricelist_id UNIK yang
+        benar2 dibutuhkan batch ini (EsuiteClient.pull_by_param(), filter
+        SERVER-SIDE, CONFIRMED LIVE oleh user) -- gantikan bulk-scan lama
+        (EsuiteClient.find_by_external_codes()) yang jadi root cause
+        ResourceExhausted & lambat (lihat customer_sync_progress.md).
+        Response GET pricelist eSuite TIDAK menampilkan balik field
+        "external_code" record itu sendiri (selalu kosong "" -- bug
+        tampilan eSuite, sudah direquest user ke dev) -- filter query-nya
+        sendiri TERBUKTI benar (meta.total), jadi kita PERCAYA data[0]
+        apa adanya, TIDAK re-match ke field external_code.
+
+        Kalau pricelist itu belum ke-push ke eSuite (belum pernah
+        /sync/pricelist ATAU ke-skip krn skipped_pricelist_no_valid_product),
+        GET-nya balik data kosong -- caller (_resolve_price_list()) return
+        None utk customer itu, key "customer_price_list" TIDAK disisipkan
+        sama sekali (partial-merge aman, customer tetap ke-upsert normal
+        tanpa pricelist, bukan fail-fast). unresolved dilaporkan ke
+        response oleh sync().
+
+        Return SEKARANG dikunci per PARTNER id (BUKAN lagi per Odoo
+        pricelist_id -- beda dari sebelum fix ini, krn 1 Odoo pricelist_id
+        mentah sudah tidak bisa dipercaya sendirian tanpa context company):
+        (partner_id_to_entry, unresolved_pricelist_external_codes)
         """
-        pricelist_ids: set[int] = set()
+        partner_ids_by_company: dict[int, list[int]] = {}
         for c in customers:
-            pricelist = c.get("property_product_pricelist")
-            if pricelist:  # Odoo many2one: [id, display_name], False kalau kosong
-                pricelist_ids.add(pricelist[0])
+            company = c.get("company_id")  # Odoo many2one: [id, display_name], False kalau kosong
+            if not c.get("property_product_pricelist") or not company:
+                continue
+            partner_ids_by_company.setdefault(company[0], []).append(c["id"])
 
-        if not pricelist_ids:
+        if not partner_ids_by_company:
+            return {}, set()
+
+        # {partner_id: pricelist_id} -- sudah company-matched (context per company)
+        partner_to_pricelist_id = self.odoo.get_pricelist_by_company(partner_ids_by_company)
+
+        if not partner_to_pricelist_id:
             return {}, set()
 
         pricelist_id_to_entry: dict[int, dict] = {}
         unresolved: set[str] = set()
-        for pid in pricelist_ids:
+        for pid in set(partner_to_pricelist_id.values()):
             code = f"{PRICELIST_EXTERNAL_CODE_PREFIX}{pid}"
             result = self.esuite.pull_by_param("pricelists", "external_code", code)
             records = result.get("data") or []
@@ -609,7 +636,13 @@ class CustomerSyncService:
             else:
                 unresolved.add(code)
 
-        return pricelist_id_to_entry, unresolved
+        partner_id_to_entry: dict[int, dict] = {
+            partner_id: pricelist_id_to_entry[pid]
+            for partner_id, pid in partner_to_pricelist_id.items()
+            if pid in pricelist_id_to_entry
+        }
+
+        return partner_id_to_entry, unresolved
 
     def _resolve_price_list(self, customer: dict, price_list_map: dict[int, dict]) -> dict | None:
         """
@@ -620,14 +653,15 @@ class CustomerSyncService:
         customer = 1 pricelist aktif" (sama seperti
         customer_pricelist_mapping_service.py).
 
-        Return None kalau property_product_pricelist kosong ATAU belum
-        ke-resolve -- caller (_to_esuite_payload()) TIDAK menyertakan key
-        "customer_price_list" sama sekali kalau None.
+        🆕 9 September 2026 -- price_list_map SEKARANG dikunci per PARTNER
+        id (BUKAN lagi per Odoo pricelist_id), lihat _resolve_price_list_map()
+        utk alasan (fix bug company-dependent pricelist).
+
+        Return None kalau customer tidak punya override pricelist
+        company-matched -- caller (_to_esuite_payload()) TIDAK menyertakan
+        key "customer_price_list" sama sekali kalau None.
         """
-        pricelist = customer.get("property_product_pricelist")
-        if not pricelist:
-            return None
-        return price_list_map.get(pricelist[0])
+        return price_list_map.get(customer.get("id"))
 
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """

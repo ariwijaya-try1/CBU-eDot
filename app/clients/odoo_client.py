@@ -545,6 +545,70 @@ class OdooClient:
             },
         )
 
+    def get_pricelist_by_company(
+        self, partner_ids_by_company: dict[int, list[int]]
+    ) -> dict[int, int]:
+        """
+        Resolve res.partner.property_product_pricelist company-dependent
+        YANG BENAR per partner -- BARU 9 September 2026, FIX root cause
+        "inconsistent pricelist" (lihat customer_sync_progress.md, kasus
+        customer "12 KITCHEN & WINE").
+
+        Root cause: property_product_pricelist itu field company_dependent
+        Odoo (nilai per-company) -- get_customers() baca field ini lewat
+        search_read POLOS TANPA context company, jadi Odoo balikin
+        override utk company DEFAULT technical user API kita (ODOO_UID),
+        BUKAN company milik partner itu sendiri. CONFIRMED LIVE 9
+        September 2026: partner "12 KITCHEN & WINE" cuma exist di company
+        Sunshine (tidak ada di CBU), Odoo UI (context Sunshine) nunjukin
+        "FS 202500 Price List (IDR)", tapi get_customers() balikin id
+        pricelist 39 ("MT 202502 CBU Price List (IDR)") -- salah company.
+
+        ⚠️ 9 September 2026 (REVISI SAME DAY): percobaan PERTAMA baca
+        ir.property langsung (get_pricelist_overrides(), method ini
+        GANTIKAN itu) GAGAL live -- Odoo balikin
+        "Object ir.property doesn't exist". Kemungkinan besar instance
+        Odoo 19 ini sudah migrasi penyimpanan field company-dependent
+        (ORM Odoo versi lebih baru pindah dari baris ir.property terpisah
+        ke kolom company-dependent langsung di tabel record-nya) -- BUKAN
+        lagi model ir.property yang bisa diakses generik. Fix SEKARANG:
+        biarkan ORM Odoo SENDIRI yang resolve company-dependent value-nya
+        (apapun mekanisme penyimpanan internalnya) dengan mengirim context
+        {"allowed_company_ids": [company_id]} per search_read -- ini cara
+        RESMI Odoo utk override company aktif per call RPC (didukung
+        `execute_kw` kwargs, TIDAK butuh model/field spesifik apa pun).
+
+        1x search_read PER company_id UNIK di batch ini (BUKAN per-partner/
+        N+1) -- caller (customer_sync_service.py::_resolve_price_list_map())
+        sudah group partner by company_id (field yang sudah ditarik
+        get_customers() sejak fitur branch 5 September) sebelum panggil ini.
+
+        partner_ids_by_company: {company_id: [partner_id, ...]}.
+        Return: {partner_id: pricelist_id} -- partner TANPA
+        property_product_pricelist terisi (di company context itu) TIDAK
+        muncul di return (caller treat sbg unresolved, konsisten pola
+        partial-merge project ini -- lihat _resolve_price_list_map()).
+        """
+        result: dict[int, int] = {}
+        for company_id, partner_ids in partner_ids_by_company.items():
+            if not partner_ids:
+                continue
+            records = self._execute(
+                "res.partner",
+                "search_read",
+                [[("id", "in", partner_ids)]],
+                {
+                    "fields": ["id", "property_product_pricelist"],
+                    "context": {"allowed_company_ids": [company_id]},
+                },
+            )
+            for rec in records:
+                pricelist = rec.get("property_product_pricelist")
+                if pricelist:
+                    result[rec["id"]] = pricelist[0]
+
+        return result
+
     # ------------------------------------------------------------------
     # GET / inspeksi mentah (16 Agustus 2026) -- dipakai
     # app/api/routes/odoo_get.py (grup Swagger "odoo - Get"), TUJUANNYA
@@ -654,7 +718,22 @@ class OdooClient:
                 # untuk alasan lengkap). Diikutkan di sini juga supaya
                 # GET /odoo/customer & /odoo/contact langsung kelihatan
                 # pricelist assignment Odoo tanpa panggil endpoint lain.
+                #
+                # 🆕 9 September 2026 -- nilai field ini SEKARANG di-resolve
+                # ulang company-aware SEBELUM di-return (lihat kode setelah
+                # search_read di bawah) -- SEBELUMNYA endpoint ini balikin
+                # nilai MENTAH apa adanya (bisa salah company, sama root
+                # cause dgn bug "12 KITCHEN & WINE" yang sempat kejadian di
+                # proses sync sungguhan -- lihat customer_sync_progress.md).
+                # "company_id" ditambah di fields query di bawah krn
+                # dibutuhkan utk resolve ini.
                 "property_product_pricelist",
+                # company_id -- 🆕 9 September 2026, DITAMBAH khusus utk
+                # resolve property_product_pricelist company-aware di atas
+                # (pola SAMA dgn get_customers(), lihat
+                # OdooClient.get_pricelist_by_company()). Sekalian berguna
+                # sbg info diagnostic (customer ini company apa).
+                "company_id",
                 # category_id (4 September 2026, DIAGNOSTIC-ONLY, TIDAK
                 # dipakai get_customers()/_to_esuite_payload() manapun).
                 # 🆕 STATUS DIREVISI (4 September, sesi sama): SEBELUMNYA
@@ -684,7 +763,43 @@ class OdooClient:
         if limit:
             kwargs["limit"] = limit
 
-        return self._execute("res.partner", "search_read", domain, kwargs)
+        records = self._execute("res.partner", "search_read", domain, kwargs)
+
+        # 🆕 9 September 2026 -- resolve property_product_pricelist
+        # company-aware, TIMPA nilai mentah (yang bisa salah company) dgn
+        # nilai yang BENAR-benar bakal dipakai kalau customer ini di-sync
+        # (pola SAMA dgn get_pricelist_by_company(), dipanggil ulang di sini
+        # supaya endpoint diagnostic ini KONSISTEN dgn get_customers()/proses
+        # sync sungguhan -- lihat customer_sync_progress.md utk detail bug
+        # asal & alasan perubahan ini).
+        partner_ids_by_company: dict[int, list[int]] = {}
+        for rec in records:
+            company = rec.get("company_id")
+            if rec.get("property_product_pricelist") and company:
+                partner_ids_by_company.setdefault(company[0], []).append(rec["id"])
+
+        if partner_ids_by_company:
+            resolved = self.get_pricelist_by_company(partner_ids_by_company)
+            pricelist_names: dict[int, str] = {}
+            pricelist_ids = set(resolved.values())
+            if pricelist_ids:
+                pl_records = self._execute(
+                    "product.pricelist",
+                    "search_read",
+                    [[("id", "in", list(pricelist_ids))]],
+                    {"fields": ["id", "name"]},
+                )
+                pricelist_names = {p["id"]: p["name"] for p in pl_records}
+            for rec in records:
+                pid = resolved.get(rec["id"])
+                # SENGAJA di-treat FALSE (bukan fallback ke nilai mentah)
+                # kalau tidak ada override company-matched -- konsisten dgn
+                # perilaku _resolve_price_list_map() di customer_sync_service.py.
+                rec["property_product_pricelist"] = (
+                    [pid, pricelist_names.get(pid, "")] if pid else False
+                )
+
+        return records
 
     def get_salespersons(self, limit: int | None = None, name: str | None = None):
         """
