@@ -25,6 +25,16 @@ ALLOWED_ENTITY_PATHS = {
     "currency", "uom", "product-type", "uom-level", "administrative-areas",
     "product", "product-category", "branches", "warehouse", "customers",
     "customergroup", "stock-matrix",
+    # 🆕 10 September 2026 -- ditambahkan buat diagnosa gap Order Tracking
+    # (lihat order_history_import.md): perlu lihat LANGSUNG daftar
+    # employee/salesman eSuite (external_code + employee_id + name) via
+    # GET /debug/pull/employee, supaya bisa dicocokkan apakah external_code
+    # yang kita kirim (SALESMAN_EXTERNAL_CODE) benar2 punya akun yang SAMA
+    # dengan akun yang dipakai login di app eDot. Sudah ada preseden dipakai
+    # (pull_by_param("employee", "employee_id", sid) di
+    # customer_sales_mapping_service.py) -- entity_path ini MEMANG dipakai
+    # project, cuma belum ikut whitelist debug endpoint ini.
+    "employee",
 }
 
 

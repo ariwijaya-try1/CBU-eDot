@@ -1,9 +1,10 @@
 import re
+from datetime import datetime, timezone
 
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.exceptions import AppError, ValidationError
-from app.core.sync_logger import log_sync_result
+from app.core.sync_logger import log_sync_result, write_customer_upsert_csv
 
 # Currency -- sama dengan yang dipakai product_sync_service.py (IDR, satu-satunya
 # currency yang dipakai di seluruh bisnis, lihat CONFIG_NOTES.md). Didefinisikan
@@ -180,9 +181,25 @@ class CustomerSyncService:
         size = batch_size or DEFAULT_BATCH_SIZE
         batches = [payload[i : i + size] for i in range(0, len(payload), size)]
 
+        # customer_batches -- 🆕 10 September 2026, SAMA SLICING dgn `batches`
+        # di atas (payload & customers 1:1 urutan/panjangnya, lihat
+        # `payload = [self._to_esuite_payload(c, ...) for c in customers]`).
+        # Dipakai buat isi kolom customer_id/name Odoo asli di CSV
+        # upsert_customer_*.csv (lihat bawah) -- payload sendiri cuma punya
+        # external_code, bukan id/name mentah.
+        customer_batches = [customers[i : i + size] for i in range(0, len(customers), size)]
+
         batch_results = []
         synced_count = 0
         failed_count = 0
+        # csv_rows -- 🆕 10 September 2026, dikumpulkan SELAMA loop batch,
+        # ditulis ke file CSV BARU (write_customer_upsert_csv()) SETELAH
+        # SEMUA batch selesai (paling akhir proses ini) -- lihat
+        # sync_logger.py::write_customer_upsert_csv() utk detail lengkap
+        # tujuan & keterbatasan granularity (BATCH-level, bukan per-customer
+        # individual dari eSuite -- dikonfirmasi user cukup utk sekarang).
+        csv_rows: list[dict] = []
+        run_timestamp = datetime.now(timezone.utc).isoformat()
 
         for idx, batch in enumerate(batches, start=1):
             try:
@@ -203,6 +220,16 @@ class CustomerSyncService:
                     batch_entry["payload_sent"] = batch
                 batch_results.append(batch_entry)
                 synced_count += len(batch)
+                for c, p in zip(customer_batches[idx - 1], batch):
+                    csv_rows.append({
+                        "customer_id": c["id"],
+                        "external_code": p["external_code"],
+                        "name": c.get("name") or "",
+                        "status": "success",
+                        "batch": idx,
+                        "timestamp": run_timestamp,
+                        "error": "",
+                    })
             except AppError as e:
                 # Sengaja di-catch per batch (bukan biar propagate ke exception
                 # handler global) -- supaya batch berikutnya tetap lanjut jalan
@@ -219,6 +246,25 @@ class CustomerSyncService:
                     batch_entry["payload_sent"] = batch
                 batch_results.append(batch_entry)
                 failed_count += len(batch)
+                error_message = e.to_dict()["error"].get("message", "")
+                for c, p in zip(customer_batches[idx - 1], batch):
+                    csv_rows.append({
+                        "customer_id": c["id"],
+                        "external_code": p["external_code"],
+                        "name": c.get("name") or "",
+                        "status": "failed",
+                        "batch": idx,
+                        "timestamp": run_timestamp,
+                        "error": error_message,
+                    })
+
+        # write_customer_upsert_csv() -- 🆕 10 September 2026, DIPANGGIL DI
+        # SINI (paling akhir, SETELAH semua batch selesai diproses) SENGAJA
+        # -- instruksi eksplisit user: file di-create di proses paling
+        # terakhir, bukan per-batch. Selalu file BARU (timestamp beda tiap
+        # panggilan sync()), lihat sync_logger.py utk detail nama file &
+        # keterbatasan granularity.
+        upsert_csv_file = write_customer_upsert_csv(csv_rows)
 
         result = {
             "total_matched_in_odoo": total_matched,
@@ -228,6 +274,7 @@ class CustomerSyncService:
             "synced_count": synced_count,
             "failed_count": failed_count,
             "batches": batch_results,
+            "upsert_csv_file": upsert_csv_file,
         }
         # customer_group_unresolved_industries -- HANYA muncul kalau ADA
         # industry_id yang direferensikan customer di batch ini TAPI Customer

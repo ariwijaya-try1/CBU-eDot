@@ -65,7 +65,22 @@ UOM_NAME_MAPPING = {
 # ⚠️ BELUM diverifikasi utk branch CBU/SAP (baru ditest utk branch Sunshine
 # Food) -- cek dulu sebelum full rollout lintas branch, lihat
 # order_history_import.md section 7 September.
-SALESMAN_EXTERNAL_CODE = "SALES-DUMMY-DEV"
+#
+# 🔧 10 September 2026 (malam) -- DIGANTI ke "SALES-TESTING-001", value LAMA
+# "SALES-DUMMY-DEV" SUDAH BASI (tidak valid lagi di sisi eSuite/eDot -- info
+# user langsung, bukan hasil investigasi kode). Konteks: dev CONFIRM menu
+# "Order Tracking" eDot difilter per-salesman yang SEDANG LOGIN (lihat
+# order_history_import.md, section paling atas) -- fitur custom utk lepas
+# dari batasan ini perlu BIAYA TAMBAHAN, jadi utk sekarang TETAP pakai 1 kode
+# tetap apa adanya (keputusan lama TIDAK berubah). Tujuan value baru ini
+# MURNI supaya salah satu dari 4 akun sales test bisa login & benar-benar
+# melihat order-order ini di Order Tracking-nya, buat bahan DEMO ke
+# management -- kalau management memang perlu fitur custom (lihat ide
+# "salesman asli per outlet" yang sengaja BELUM dikerjakan di section atas
+# file order_history_import.md), demo ini jadi acuan arahnya lebih jelas.
+# BUKAN keputusan arsitektur baru -- cuma ganti VALUE dummy, mekanisme "1
+# kode tetap utk semua order" TIDAK berubah.
+SALESMAN_EXTERNAL_CODE = "SALES-TESTING-001"
 
 # Filter scope (28 Agustus 2026, field Odoo sale.order.invoice_status --
 # selection standar: upselling/invoiced/to invoice/no): per outlet, kirim
@@ -198,6 +213,7 @@ class OrderHistorySyncService:
         salesman_external_code: str | None = None,
         dry_run: bool = False,
         batch_size: int | None = None,
+        include_payload: bool = False,
     ) -> dict:
         if not customer_ids:
             raise ValidationError("customer_ids tidak boleh kosong")
@@ -298,11 +314,14 @@ class OrderHistorySyncService:
                 (len(orders_payload) + resolved_batch_size - 1) // resolved_batch_size
                 if orders_payload else 0
             ),
-            # Cuma diisi kalau dry_run=True -- caller minta lihat/ambil
-            # payload mentah (mis. buat ditest manual di Postman), BUKAN
-            # bagian dari response normal (hindari bikin response biasa jadi
-            # lebih besar tanpa perlu). Lihat order_history_import.md.
-            "payload": preview_payload if dry_run else None,
+            # Cuma diisi kalau dry_run=True ATAU caller EKSPLISIT minta lewat
+            # include_payload=True (🆕 10 September 2026 -- kebutuhan verifikasi
+            # payload ASLI yang terkirim di push BENERAN, mis. cek
+            # salesman/branch/customer external_code apa yang sebenarnya
+            # dikirim, tanpa perlu ulang panggil dry_run terpisah). Default
+            # False -- behavior lama (payload null di luar dry_run) TIDAK
+            # berubah kalau param ini tidak diisi. Lihat order_history_import.md.
+            "payload": preview_payload if (dry_run or include_payload) else None,
             "esuite_response": None,
         }
 

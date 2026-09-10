@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 
 from app.core.exceptions import ValidationError
+from app.core.sync_logger import read_latest_customer_upsert_csv
 from app.services.order_history_sync_service import OrderHistorySyncService
 
 router = APIRouter()
@@ -111,6 +112,48 @@ def sync_order_history(
             "dicek dulu lewat dry_run=true sebelum push beneran."
         ),
     ),
+    use_upsert_csv: bool = Query(
+        default=False,
+        description=(
+            "🆕 10 September 2026 -- HANYA berlaku kalau `customer_ids` "
+            "DIKOSONGKAN (mode mass). Kalau True, customer yang diproses "
+            "BUKAN semua customer Odoo, tapi HANYA customer_id yang "
+            "berstatus 'success' di file upsert_customer_*.csv TERBARU "
+            "(hasil POST /sync/customers) -- jalankan /sync/customers dulu "
+            "(full, tanpa limit kecil) supaya file-nya ada. Tujuan: hindari "
+            "kirim order utk customer yang belum sukses di-upsert ke eSuite "
+            "(mayoritas skip eSuite selama ini = 'customer ... not "
+            "resolved'). ⚠️ Granularity file ini BATCH-LEVEL, bukan "
+            "per-customer confirmed dari eSuite -- lihat "
+            "customer_sync_progress.md."
+        ),
+    ),
+    upsert_csv_file: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL, dipakai bareng use_upsert_csv=true -- file "
+            "upsert_customer_*.csv SPESIFIK yang mau dipakai (mis. mau ulang "
+            "test dari snapshot lama), BUKAN otomatis yang terbaru. Boleh "
+            "kirim NAMA FILE saja (mis. \"upsert_customer_10-09-2026_"
+            "03-51-34.csv\") -- otomatis dicari di folder logs/ yang sama "
+            "dengan file itu ditulis, TIDAK perlu path lengkap. Path lengkap "
+            "(absolute) juga tetap didukung. Diabaikan kalau "
+            "use_upsert_csv=false."
+        ),
+    ),
+    include_payload: bool = Query(
+        default=False,
+        description=(
+            "🆕 10 September 2026 -- kalau True, field `payload` di response "
+            "TETAP diisi walau dry_run=False (push beneran) -- berisi body "
+            "PERSIS yang dikirim ke eSuite (customer/branch/salesman "
+            "external_code, items, dst). Default False (behavior lama: "
+            "`payload` null kalau bukan dry_run, supaya response tidak "
+            "membesar tanpa perlu). Berguna buat verifikasi manual (mis. cek "
+            "salesman_external_code mana yang benar-benar terkirim) TANPA "
+            "harus panggil ulang pakai dry_run=true terpisah."
+        ),
+    ),
 ):
     """
     v1 (28 Agustus 2026) -- push riwayat order ke webhook eDot BARU
@@ -151,6 +194,16 @@ def sync_order_history(
     ke-import ke eSuite -- WAJIB baca `esuite_response.data.results[]` per
     order (`imported`/`skipped`+`reason`).
 
+    🆕 10 September 2026 -- `use_upsert_csv=true` (hanya berlaku kalau
+    `customer_ids` dikosongkan): filter mode mass supaya HANYA customer_id
+    yang sukses di file `upsert_customer_*.csv` TERBARU (hasil
+    POST /sync/customers) yang diproses -- bukan semua customer Odoo.
+    Ditambahkan menyusul temuan log 10 September: mayoritas skip eSuite
+    ternyata `"customer ... not resolved"` (customer belum sukses
+    di-upsert), jadi filter ini menghindari kirim order utk customer yang
+    memang belum bisa di-resolve eSuite. Response ikut membawa field baru
+    `upsert_csv_source` (path file yang dipakai) kalau opsi ini aktif.
+
     Batching (7 September 2026, BARU): kalau jumlah order yang cocok lebih
     banyak dari `batch_size` (default/max 100, batas eSuite), endpoint ini
     OTOMATIS chunk & push berkali-kali (dgn jeda antar batch) -- caller
@@ -179,14 +232,29 @@ def sync_order_history(
     # OdooClient.get_customer_ids() (versi ringan get_customers(), cuma
     # narik id -- lihat docstring method itu). Kalau diisi, behavior LAMA
     # (parse comma-separated) TIDAK berubah sama sekali.
-    parsed_ids = (
-        _parse_customer_ids(customer_ids) if customer_ids else service.odoo.get_customer_ids()
-    )
-    return service.sync(
+    #
+    # 🆕 10 September 2026 -- use_upsert_csv HANYA dicek kalau customer_ids
+    # kosong (mode mass). Kalau customer_ids diisi manual, itu instruksi
+    # EKSPLISIT caller -- use_upsert_csv diabaikan, tidak menimpa pilihan
+    # manual. csv_source cuma keisi kalau jalur ini yang dipakai, supaya
+    # response bisa kasih tau snapshot file mana yang jadi filter.
+    csv_source: str | None = None
+    if customer_ids:
+        parsed_ids = _parse_customer_ids(customer_ids)
+    elif use_upsert_csv:
+        parsed_ids, csv_source = read_latest_customer_upsert_csv(upsert_csv_file)
+    else:
+        parsed_ids = service.odoo.get_customer_ids()
+
+    result = service.sync(
         customer_ids=parsed_ids,
         lookback_limit=lookback_limit,
         max_orders_per_customer=max_orders_per_customer,
         salesman_external_code=salesman_external_code,
         dry_run=dry_run,
         batch_size=batch_size,
+        include_payload=include_payload,
     )
+    if csv_source:
+        result["upsert_csv_source"] = csv_source
+    return result
