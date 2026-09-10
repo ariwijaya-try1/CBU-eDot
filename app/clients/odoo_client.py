@@ -545,6 +545,58 @@ class OdooClient:
             },
         )
 
+    def get_customer_ids(self) -> list[int]:
+        """
+        Versi RINGAN get_customers() -- cuma balikin list id (res.partner),
+        filter SAMA PERSIS (customer_rank > 0, active=True), TANPA field
+        lain (address/pricelist/industry/company/dll). ð 10 September 2026,
+        dipakai order_history_sync_service.py lewat POST /sync/order-history
+        buat proses SEMUA outlet sekaligus tanpa perlu input id satu-satu/
+        comma-separated (permintaan user). Method TERPISAH dari
+        get_customers() (bukan manggil get_customers() lalu extract "id"
+        saja) krn order history cuma butuh id -- narik field lain (address/
+        pricelist/dll) utk ribuan customer sia-sia kalau ujungnya cuma
+        dipakai loop id.
+        """
+        records = self._execute(
+            "res.partner",
+            "search_read",
+            [[("customer_rank", ">", 0), ("active", "=", True)]],
+            {"fields": ["id"]},
+        )
+        return [r["id"] for r in records]
+
+    def get_order_line_quantities(self, invoice_statuses: list[str] | None = None) -> list[dict]:
+        """
+        🆕 10 September 2026 -- DIAGNOSTIC-ONLY, dipakai
+        GET /odoo/order-quantity-fraction (odoo_get.py). Cuma search_read
+        sale.order.line MENTAH (id, order_id, product_id, product_uom_qty,
+        product_uom_id), TIDAK menghitung/mengelompokkan apapun di sini --
+        logic fraksi/grouping-nya ada di route (pola sama dengan
+        get_stock_by_warehouse() + GET /odoo/stock-fraction).
+
+        Dibuat buat investigasi VALIDATION_ERROR "quantity ... bukan
+        bilangan bulat" di POST /sync/order-history (eSuite orders/import
+        WAJIB quantity integer/int64 -- lihat order_history_sync_service.py
+        & order_history_import.md). display_type="False" -- skip baris
+        section/note Odoo (product_id selalu kosong di baris itu, bukan
+        item produk beneran, pola sama dengan _to_order_payload()).
+
+        invoice_statuses OPSIONAL -- kalau diisi, filter
+        order_id.invoice_status in [...] (biar bisa disamakan/diperluas
+        dari scope POST /sync/order-history yang sebenarnya); kalau None,
+        SEMUA sale.order.line ikut ke-scan tanpa filter status.
+        """
+        domain = [("display_type", "=", False)]
+        if invoice_statuses:
+            domain.append(("order_id.invoice_status", "in", invoice_statuses))
+        return self._execute(
+            "sale.order.line",
+            "search_read",
+            [domain],
+            {"fields": ["id", "order_id", "product_id", "product_uom_qty", "product_uom_id"]},
+        )
+
     def get_pricelist_by_company(
         self, partner_ids_by_company: dict[int, list[int]]
     ) -> dict[int, int]:
@@ -936,6 +988,89 @@ class OdooClient:
         lines_by_order = {}
         for line in lines:
             # order_id datang sbg [id, display_name] (many2one Odoo standar)
+            order_id = line["order_id"][0] if line["order_id"] else None
+            lines_by_order.setdefault(order_id, []).append(line)
+
+        for order in orders:
+            order["lines"] = lines_by_order.get(order["id"], [])
+
+        return orders
+
+    def get_sales_orders(
+        self,
+        so_number: str | None = None,
+        customer_id: int | None = None,
+        customer_name: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """
+        🆕 10 September 2026 -- DIAGNOSTIC-ONLY, dipakai GET /odoo/sales-order.
+        Cari sale.order (+ lines-nya, struktur response SAMA PERSIS dengan
+        get_order_history_by_customer() di atas) lewat SALAH SATU atau
+        GABUNGAN filter: so_number (sale.order.name, ilike), customer_id
+        (exact), customer_name (ilike). Dibuat buat cek manual order2 yang
+        muncul di `local_skipped` POST /sync/order-history (nomor SO,
+        customer_name, customer_id sudah disertakan di situ sejak revisi
+        10 September 2026 -- lihat order_history_sync_service.py).
+
+        customer_name di-resolve 2 TAHAP (cari res.partner id dulu lewat
+        name ilike, BARU filter sale.order.partner_id in [...]) -- BUKAN
+        domain related-field "partner_id.name ilike" langsung. Konsisten
+        dengan FIX get_order_line_quantities() (10 September 2026, lihat
+        docstring method itu, hari yang sama) -- domain related-field
+        TERBUKTI bisa lambat/timeout kalau tabelnya besar, jadi dihindari
+        di sini juga sejak awal, bukan nunggu kejadian ulang.
+
+        limit HANYA benar-benar relevan kalau so_number kosong (nomor SO
+        spesifik biasanya balik <=1 hasil) -- tetap diterapkan apa adanya
+        (konsisten konvensi MAX_LIMIT/DEFAULT_LIMIT di odoo_get.py).
+
+        Kosongkan SEMUA filter -- balik daftar sale.order TERBARU apa
+        adanya (dibatasi limit), sama seperti pola endpoint lain di file
+        ini (mis. get_products_raw()) kalau tidak ada filter diisi.
+        """
+        domain = []
+        if so_number:
+            domain.append(("name", "ilike", so_number))
+        if customer_id:
+            domain.append(("partner_id", "=", customer_id))
+        if customer_name:
+            partner_ids = self._execute(
+                "res.partner", "search", [[("name", "ilike", customer_name)]]
+            )
+            domain.append(("partner_id", "in", partner_ids))
+
+        kwargs = {
+            "fields": [
+                "id", "name", "date_order", "state", "locked",
+                "invoice_status", "partner_id", "user_id", "currency_id",
+                "amount_untaxed", "amount_tax", "amount_total", "company_id",
+            ],
+            "order": "date_order desc",
+        }
+        if limit:
+            kwargs["limit"] = limit
+
+        orders = self._execute("sale.order", "search_read", [domain], kwargs)
+        if not orders:
+            return []
+
+        order_ids = [o["id"] for o in orders]
+        lines = self._execute(
+            "sale.order.line",
+            "search_read",
+            [[("order_id", "in", order_ids)]],
+            {
+                "fields": [
+                    "id", "order_id", "product_id", "name",
+                    "product_uom_qty", "product_uom_id", "price_unit",
+                    "discount", "price_subtotal", "price_tax", "price_total",
+                ],
+            },
+        )
+
+        lines_by_order = {}
+        for line in lines:
             order_id = line["order_id"][0] if line["order_id"] else None
             lines_by_order.setdefault(order_id, []).append(line)
 

@@ -31,13 +31,18 @@ def _parse_customer_ids(customer_ids: str) -> list[int]:
 
 @router.post("/sync/order-history")
 def sync_order_history(
-    customer_ids: str = Query(
-        ...,
+    customer_ids: str | None = Query(
+        default=None,
         description=(
-            "WAJIB -- id Odoo res.partner (Customer/Outlet), comma-separated "
-            "kalau mau bulk (mis. 39353,1655,20481). Kirim 1 id -> cuma 1 "
-            "outlet diproses. Sama seperti GET /odoo/order-history-by-customer, "
-            "ini id Odoo MENTAH, BUKAN external_code."
+            "id Odoo res.partner (Customer/Outlet), comma-separated kalau "
+            "mau bulk (mis. 39353,1655,20481). Kirim 1 id -> cuma 1 outlet "
+            "diproses. Sama seperti GET /odoo/order-history-by-customer, ini "
+            "id Odoo MENTAH, BUKAN external_code. ð 10 September 2026 -- "
+            "KOSONGKAN param ini utk proses SEMUA customer sekaligus "
+            "(customer_rank > 0, active=True, filter SAMA dgn /sync/customers "
+            "tanpa external_codes/names) -- TIDAK perlu lagi comma-separated "
+            "manual semua id kalau maksudnya memang \"semua\". Disarankan "
+            "coba dry_run=true dulu sebelum push beneran krn scope-nya besar."
         ),
     ),
     lookback_limit: int | None = Query(
@@ -45,13 +50,30 @@ def sync_order_history(
         ge=1,
         le=500,
         description=(
-            "OPSIONAL -- berapa banyak order TERBARU per customer yang di-scan. "
-            "SEMUA order di dalam window ini yang invoice_status masuk daftar "
-            "eligible (\"to invoice\" atau \"invoiced\", lihat "
-            "ELIGIBLE_INVOICE_STATUSES di service) ikut DIKIRIM (bukan cuma 1, "
-            "direvisi 7 September 2026 -- 1 outlet lama bisa hasilkan banyak "
-            "order sekaligus). Default 50. Perbesar kalau butuh histori lebih "
-            "jauh ke belakang per outlet."
+            "OPSIONAL -- berapa banyak order TERBARU per customer yang "
+            "DI-SCAN (search window mencari yang eligible, invoice_status "
+            "\"to invoice\"/\"invoiced\" -- lihat ELIGIBLE_INVOICE_STATUSES "
+            "di service). 🔧 10 September 2026: param ini TIDAK LAGI "
+            "menentukan berapa yang DIKIRIM (lihat max_orders_per_customer "
+            "di bawah utk itu) -- murni seberapa jauh ke belakang dicari. "
+            "Default 50. Perbesar kalau outlet tertentu jarang order jadi "
+            "susah nemu yang eligible dalam window default."
+        ),
+    ),
+    max_orders_per_customer: int | None = Query(
+        default=None,
+        ge=1,
+        description=(
+            "🆕 10 September 2026 -- berapa order TERBARU per customer yang "
+            "BENERAN DIKIRIM (dari hasil eligible di dalam lookback_limit, "
+            "sudah diurutkan date_order desc -- jadi N teratas = N TERBARU). "
+            "Default 1 (keputusan user: mode mass \"semua customer\" cukup "
+            "1 order/outlet -- app eDot/Salesforce fokus \"quick look\" "
+            "kapan terakhir order, BUKAN arsip lengkap, histori penuh tetap "
+            "dilihat dari Odoo). Naikkan MANUAL (mis. 5, 10) kalau memang "
+            "perlu histori lebih dalam utk customer_ids tertentu yang "
+            "disebut eksplisit -- keputusan ada di pemanggil, bukan hardcode "
+            "beda per mode."
         ),
     ),
     salesman_external_code: str | None = Query(
@@ -96,17 +118,25 @@ def sync_order_history(
     yang sudah ada di Postman collection, lihat project memory
     order_history_import.md utk detail lengkap perbedaan & histori keputusan).
 
-    Scope (DIREVISI 7 September 2026, sesuai kebutuhan tim sales -- lihat
-    project memory order_history_import.md): per outlet/customer, SEMUA order
-    yang `invoice_status` masuk `ELIGIBLE_INVOICE_STATUSES`
-    (`["to invoice", "invoiced"]` per 28 Agustus 2026, lihat service utk daftar
-    terkini) DALAM WINDOW `lookback_limit` dikirim -- BUKAN cuma 1 order
-    terakhir seperti versi awal. Tujuannya sales bisa lihat riwayat order
-    outlet lewat filter-by-outlet di app mobile eDot. Kalau 1 customer tidak
+    Scope 🔧 DIREVISI 10 September 2026 (menggantikan keputusan 7 September
+    "SEMUA order eligible dalam lookback_limit dikirim" -- lihat project
+    memory order_history_import.md utk kronologi lengkap kedua keputusan):
+    per outlet/customer, kirim `max_orders_per_customer` order TERBARU
+    (default 1) yang `invoice_status` masuk `ELIGIBLE_INVOICE_STATUSES`
+    (`["to invoice", "invoiced"]`, lihat service utk daftar terkini) di
+    dalam window `lookback_limit`. Alasan revisi: app eDot/Salesforce
+    fokusnya "quick look" (kapan terakhir outlet order -- eSuite sendiri
+    cuma nampilin "last order X days ago"), BUKAN arsip lengkap -- histori
+    lengkap tetap dilihat dari Odoo langsung, bridge ini bukan alat
+    "memindahkan Odoo ke eSuite". `max_orders_per_customer` bisa
+    di-override manual per panggilan (mis. customer_ids spesifik + N lebih
+    besar) kalau memang perlu histori lebih dalam. Kalau 1 customer tidak
     punya SATU PUN order dengan status yang cocok dalam `lookback_limit` order
     terbarunya, customer itu di-skip LOKAL (tidak dikirim ke eSuite sama
-    sekali, muncul di `local_skipped` pada response) -- beda dari skip yang
-    dilaporkan eSuite sendiri (`esuite_response.data.results[]`, mis. karena
+    sekali, muncul di `local_skipped` pada response, sudah menyertakan
+    `customer_name`/`order_name` sejak 10 September 2026 buat gampang cek
+    manual lewat GET /odoo/sales-order) -- beda dari skip yang dilaporkan
+    eSuite sendiri (`esuite_response.data.results[]`, mis. karena
     product/salesman belum ke-resolve).
 
     Salesman: SEMUA order pakai 1 external_code TETAP (lihat konstanta
@@ -134,11 +164,28 @@ def sync_order_history(
     di-copy-paste ke Postman/tool lain buat testing manual. Field `batch_count`
     ikut muncul di dry_run supaya bisa cek dulu berapa batch yang akan
     dipakai sebelum push beneran.
+
+    ð 10 September 2026 -- `customer_ids` SEKARANG OPSIONAL: kosongkan
+    param ini utk proses SEMUA customer sekaligus (filter customer_rank > 0
+    & active=True, via `OdooClient.get_customer_ids()`), TANPA perlu susun
+    comma-separated semua id secara manual. Behavior LAMA (isi 1/banyak id
+    manual) TIDAK berubah. â ï¸ Scope "semua customer" bisa lumayan besar
+    (1 Odoo call per customer_id, sama seperti mode manual -- lihat
+    `sync()` di service) -- disarankan `dry_run=true` dulu buat cek
+    `batch_count`/`local_skipped` sebelum push beneran.
     """
-    parsed_ids = _parse_customer_ids(customer_ids)
+    # ð 10 September 2026 -- customer_ids sekarang OPSIONAL: kosongkan
+    # utk proses SEMUA customer (customer_rank > 0, active=True) via
+    # OdooClient.get_customer_ids() (versi ringan get_customers(), cuma
+    # narik id -- lihat docstring method itu). Kalau diisi, behavior LAMA
+    # (parse comma-separated) TIDAK berubah sama sekali.
+    parsed_ids = (
+        _parse_customer_ids(customer_ids) if customer_ids else service.odoo.get_customer_ids()
+    )
     return service.sync(
         customer_ids=parsed_ids,
         lookback_limit=lookback_limit,
+        max_orders_per_customer=max_orders_per_customer,
         salesman_external_code=salesman_external_code,
         dry_run=dry_run,
         batch_size=batch_size,

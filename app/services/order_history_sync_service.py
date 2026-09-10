@@ -85,16 +85,38 @@ SALESMAN_EXTERNAL_CODE = "SALES-DUMMY-DEV"
 # Lihat order_history_import.md utk kronologi keputusan lama vs baru.
 ELIGIBLE_INVOICE_STATUSES = ["to invoice", "invoiced"]
 
-# Berapa banyak order TERBARU per customer yang di-scan (dari
+# Berapa banyak order TERBARU per customer yang DI-SCAN dari Odoo (dari
 # get_order_history_by_customer(), sudah date_order desc, jadi ini window
-# "N order paling baru") -- SEMUA yang invoice_status cocok di dalam window
-# ini ikut dikirim (bukan cuma window pencarian lagi sejak revisi scope 7
-# September, lihat komentar ELIGIBLE_INVOICE_STATUSES). Bukan angka final --
-# default aman supaya tidak narik seluruh histori tiap customer (bisa
-# ratusan order utk customer lama, tiap order = 1 item di orders[] yang
-# dipush). Perbesar param lookback_limit di endpoint kalau outlet tertentu
-# perlu histori lebih jauh ke belakang.
+# "N order paling baru" yang DICARI) -- MURNI search window, BUKAN jumlah
+# yang dikirim (lihat DEFAULT_MAX_ORDERS_PER_CUSTOMER di bawah utk itu).
+# Perbesar param ini di endpoint kalau outlet tertentu perlu dicari lebih
+# jauh ke belakang utk nemuin order eligible (mis. outlet jarang order).
 DEFAULT_LOOKBACK_LIMIT = 50
+
+# 🔧 10 September 2026 -- REVISI keputusan scope 7 September ("SEMUA order
+# eligible dalam lookback_limit dikirim"). Diskusi ulang dgn user: app
+# eDot/Salesforce fokusnya "quick look" (kapan terakhir outlet order --
+# eSuite sendiri cuma nampilin "last order X days ago", bukan daftar
+# histori), BUKAN arsip lengkap -- histori lengkap tetap sumbernya Odoo,
+# bridge ini TIDAK sedang "memindahkan Odoo ke eSuite". Jadi dipisah jadi
+# 2 dial independen: lookback_limit (search window, di atas, TIDAK
+# berubah) vs param BARU max_orders_per_customer (dari `matches` yang
+# eligible, SLICE ke N TERATAS -- matches sudah date_order desc, jadi N
+# teratas = N TERBARU) -- INI yang menentukan jumlah TERKIRIM.
+#
+# Default = 1 (utk mode mass "semua customer" -- keputusan eksplisit user:
+# "untuk mass upsert aku rasa 1 cukup"). TETAP bisa di-override MANUAL per
+# panggilan (`customer_ids` diisi spesifik + `max_orders_per_customer`
+# lebih besar, mis. 5/10) utk kasus tertentu yang butuh histori lebih
+# dalam -- keputusan ADA DI HUMAN yang manggil, BUKAN hardcode berbeda
+# per mode (parameter SAMA dipakai kedua mode, cuma defaultnya yang aman).
+#
+# ⚠️ Filter ELIGIBLE_INVOICE_STATUSES (di atas) SENGAJA TIDAK disentuh di
+# revisi ini (user: "kondisi hanya complete order pun aku rasa masih akan
+# jadi pembahasan nantinya... tapi untuk fase 1 cukup, jangan overengineering
+# dulu") -- kemungkinan didiskusikan ulang di fase berikutnya, BUKAN scope
+# perubahan ini.
+DEFAULT_MAX_ORDERS_PER_CUSTOMER = 1
 
 CURRENCY = "IDR"  # string literal, BUKAN object -- beda dari field currency di endpoint /sales-order lama
 
@@ -145,11 +167,18 @@ class OrderHistorySyncService:
     v1 (28 Agustus 2026) -- push riwayat order ke webhook eDot
     POST /v1/webhook/orders/import (endpoint TERPISAH dari POST /sales-order
     yang sudah ada di Postman collection -- lihat order_history_import.md
-    utk detail perbedaannya). Scope (DIREVISI 7 September 2026, dikonfirmasi
-    user sesuai feedback tim sales): per outlet/customer, SEMUA order yang
-    invoice_status masuk ELIGIBLE_INVOICE_STATUSES dalam window lookback_limit
-    dikirim (bukan lagi cuma 1 order terakhir seperti v1 awal) -- tujuannya
-    sales bisa lihat riwayat order outlet via filter-by-outlet di app mobile.
+    utk detail perbedaannya).
+
+    Scope 🔧 DIREVISI 10 September 2026 (menggantikan keputusan 7 September
+    "SEMUA order eligible dalam lookback_limit dikirim"): per outlet/
+    customer, kirim `max_orders_per_customer` order TERBARU (default 1)
+    yang invoice_status masuk ELIGIBLE_INVOICE_STATUSES -- BUKAN lagi
+    "semua yang eligible". Alasan: app eDot/Salesforce fokusnya "quick
+    look" (kapan terakhir outlet order), bukan arsip lengkap -- histori
+    lengkap tetap dilihat dari Odoo langsung. `max_orders_per_customer`
+    tetap bisa di-override manual per panggilan (mis. sync 1 customer
+    spesifik dgn N lebih besar) -- lihat komentar DEFAULT_MAX_ORDERS_PER_
+    CUSTOMER di atas file ini utk detail lengkap.
 
     Terima 1 ATAU BANYAK customer_id sekaligus (kirim 1 -> cuma 1 yang
     diproses) -- desain diminta user 28 Agustus 2026 supaya endpoint yang
@@ -165,6 +194,7 @@ class OrderHistorySyncService:
         self,
         customer_ids: list[int],
         lookback_limit: int | None = None,
+        max_orders_per_customer: int | None = None,
         salesman_external_code: str | None = None,
         dry_run: bool = False,
         batch_size: int | None = None,
@@ -173,6 +203,9 @@ class OrderHistorySyncService:
             raise ValidationError("customer_ids tidak boleh kosong")
 
         lookback_limit = lookback_limit or DEFAULT_LOOKBACK_LIMIT
+        # 🔧 10 September 2026 -- lihat komentar DEFAULT_MAX_ORDERS_PER_CUSTOMER
+        # di atas file ini. Dial TERPISAH dari lookback_limit (search window).
+        resolved_max_orders = max_orders_per_customer or DEFAULT_MAX_ORDERS_PER_CUSTOMER
         # Override manual per-call (mis. buat testing kode salesman lain) --
         # default tetap SALESMAN_EXTERNAL_CODE kalau tidak diisi caller.
         resolved_salesman_code = salesman_external_code or SALESMAN_EXTERNAL_CODE
@@ -186,14 +219,28 @@ class OrderHistorySyncService:
 
         for customer_id in customer_ids:
             orders = self.odoo.get_order_history_by_customer(customer_id, limit=lookback_limit)
-            # REVISI 7 September 2026: SEMUA order yang match ikut dikirim
-            # (bukan cuma yang pertama/terakhir ketemu) -- lihat komentar
-            # ELIGIBLE_INVOICE_STATUSES di atas utk alasan scope berubah.
-            matches = [o for o in orders if o.get("invoice_status") in ELIGIBLE_INVOICE_STATUSES]
+            # 🔧 10 September 2026 -- REVISI 7 September ("SEMUA order match
+            # ikut dikirim") DIGANTI lagi: SLICE ke `resolved_max_orders`
+            # TERATAS (orders sudah date_order desc dari Odoo, jadi N
+            # teratas = N TERBARU) -- lihat komentar DEFAULT_MAX_ORDERS_PER_
+            # CUSTOMER di atas file ini utk alasan lengkap.
+            matches = [o for o in orders if o.get("invoice_status") in ELIGIBLE_INVOICE_STATUSES][:resolved_max_orders]
             if not matches:
                 eligible_str = "/".join(ELIGIBLE_INVOICE_STATUSES)
+                # customer_name (🆕 10 September 2026, permintaan user) --
+                # ambil dari order APA SAJA milik customer ini kalau ada
+                # (field partner_id sudah ikut ditarik get_order_history_by_
+                # customer(), TANPA call tambahan) -- kalau customer ini
+                # benar-benar 0 order sama sekali, tetap None (tidak ada
+                # sumber nama dari Odoo di titik ini).
+                customer_name = None
+                if orders:
+                    partner_field = orders[0].get("partner_id")
+                    if partner_field:
+                        customer_name = partner_field[1]
                 local_skipped.append({
                     "customer_id": customer_id,
+                    "customer_name": customer_name,
                     "reason": (
                         f"tidak ada order dengan invoice_status in [{eligible_str}] "
                         f"dalam {lookback_limit} order terbaru customer ini"
@@ -202,7 +249,34 @@ class OrderHistorySyncService:
                 continue
 
             for match in matches:
-                orders_payload.append(self._to_order_payload(match, customer_id, resolved_salesman_code))
+                # 🆕 10 September 2026 -- SEBELUMNYA: 1 order gagal validasi (mis.
+                # quantity pecahan produk kg, UOM tidak dikenal, dll di
+                # _to_order_payload()) bikin ValidationError PROPAGATE keluar
+                # loop ini, meng-crash SELURUH sync() call -- customer LAIN yang
+                # belum sempat diproses ikut gagal total. Makin berisiko sejak
+                # mode "semua customer" ada (POST /sync/order-history tanpa
+                # customer_ids) krn makin banyak customer = makin besar peluang
+                # 1 order kena kasus ini. Keputusan user 10 September 2026: skip
+                # order yang gagal SAJA (dicatat di local_skipped utk diaudit),
+                # customer & order lain TETAP lanjut diproses & terkirim normal.
+                try:
+                    orders_payload.append(self._to_order_payload(match, customer_id, resolved_salesman_code))
+                except ValidationError as e:
+                    # customer_name/order_name (🆕 10 September 2026,
+                    # permintaan user -- log yang gagal WAJIB sertakan nomor
+                    # SO + nama customer + id customer, biar gampang
+                    # ditindaklanjuti manual) -- keduanya sudah ada di
+                    # `match` (dari get_order_history_by_customer()), TANPA
+                    # perlu call tambahan ke Odoo.
+                    partner_field = match.get("partner_id") or [None, None]
+                    local_skipped.append({
+                        "customer_id": customer_id,
+                        "customer_name": partner_field[1],
+                        "order_id": match.get("id"),
+                        "order_name": match.get("name"),
+                        "reason": e.message,
+                        "error": e.to_dict()["error"],
+                    })
 
         # Payload PREVIEW (dry_run) -- SEMUA order jadi 1 payload utuh, TIDAK
         # di-chunk (dry_run cuma menampilkan, tidak pernah push), jadi caller
@@ -317,8 +391,9 @@ class OrderHistorySyncService:
                 "failed_count": (combined_summary.get("skipped") or 0) + (combined_summary.get("errored") or 0),
             },
             note=(
-                f"orders/import -- semua order/outlet (revisi scope 7 Sep 2026), "
-                f"invoice_status in {ELIGIBLE_INVOICE_STATUSES}, lookback {lookback_limit}, "
+                f"orders/import -- max {resolved_max_orders} order terbaru/outlet "
+                f"(revisi scope 10 Sep 2026), invoice_status in {ELIGIBLE_INVOICE_STATUSES}, "
+                f"lookback {lookback_limit}, "
                 f"{len(local_skipped)} customer di-skip lokal (tidak ada order match), "
                 f"{len(batches)} batch @ max {resolved_batch_size} order/batch"
             ),

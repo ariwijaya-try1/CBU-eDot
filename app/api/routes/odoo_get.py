@@ -206,6 +206,48 @@ def get_odoo_order_history_by_customer(
     return odoo.get_order_history_by_customer(customer_id=customer_id, limit=limit)
 
 
+@router.get("/odoo/sales-order")
+def get_odoo_sales_order(
+    so_number: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL -- filter sale.order.name ilike (partial match), mis. "
+            "'SO/SFC/25/06/19150' atau partial 'SFC/25/06'. Kalau diisi, "
+            "param 'limit' di bawah kurang relevan (nomor SO spesifik "
+            "biasanya balik <=1 order) tapi tetap berlaku."
+        ),
+    ),
+    customer_id: int | None = Query(default=None, description="OPSIONAL -- filter exact res.partner id (Customer/Outlet) -- lihat GET /odoo/customer."),
+    customer_name: str | None = Query(default=None, description="OPSIONAL -- filter nama customer ilike (partial match). Dipakai kalau customer_id tidak diketahui -- mis. dari 'customer_name' di local_skipped POST /sync/order-history."),
+    limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description=f"Batasi jumlah SALES ORDER (bukan baris item) -- terutama dipakai kalau so_number KOSONG. Default {DEFAULT_LIMIT}, maksimal {MAX_LIMIT}."),
+):
+    """
+    DIAGNOSTIC-ONLY (10 September 2026) -- GET mentah sale.order LENGKAP
+    dgn baris item-nya (sale.order.line, key "lines" per order, struktur
+    SAMA PERSIS dgn GET /odoo/order-history-by-customer), TIDAK push
+    apapun ke eSuite. Filter bisa SALAH SATU atau GABUNGAN so_number/
+    customer_id/customer_name -- kosongkan semua utk lihat order TERBARU
+    apa adanya (dibatasi limit).
+
+    Dibuat buat cek manual order2 yang muncul di `local_skipped`
+    POST /sync/order-history (permintaan user 10 September 2026) -- field
+    `order_name` (nomor SO), `customer_name`, `customer_id` di local_skipped
+    tinggal dipakai LANGSUNG sbg parameter di sini buat lihat detail order
+    yang gagal (mis. kasus quantity kg pecahan, lihat
+    GET /odoo/order-quantity-fraction & order_history_import.md).
+
+    customer_name di-resolve 2 tahap (res.partner dulu, BUKAN domain
+    related-field langsung) -- lihat catatan performa di
+    OdooClient.get_sales_orders().
+    """
+    return odoo.get_sales_orders(
+        so_number=so_number,
+        customer_id=customer_id,
+        customer_name=customer_name,
+        limit=limit,
+    )
+
+
 @router.get("/odoo/pricelist")
 def get_odoo_pricelist(
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -272,6 +314,87 @@ def get_odoo_pricelist_item(
         product_tmpl_id=product_tmpl_id,
         limit=limit,
     )
+
+
+@router.get("/odoo/order-quantity-fraction")
+def get_odoo_order_quantity_fraction(
+    invoice_statuses: str | None = Query(
+        default="to invoice,invoiced",
+        description=(
+            "OPSIONAL -- filter sale.order.invoice_status, comma-separated "
+            "(default 'to invoice,invoiced', SAMA PERSIS filter POST "
+            "/sync/order-history). Kosongkan (kirim string kosong) utk scan "
+            "SEMUA sale.order.line tanpa filter status."
+        ),
+    ),
+    result_limit: int | None = Query(default=30, ge=1, le=200, description="Batasi jumlah CONTOH per UOM yang ditampilkan (default 30, maksimal 200)."),
+):
+    """
+    DIAGNOSTIC-ONLY (10 September 2026) -- BUKAN bagian alur sync manapun,
+    tidak push apapun. Cari sale.order.line yang product_uom_qty-nya BUKAN
+    bilangan bulat, dikelompokkan per UOM -- dipakai investigasi
+    VALIDATION_ERROR "quantity ... bukan bilangan bulat" di
+    POST /sync/order-history (eSuite orders/import WAJIB quantity
+    integer/int64, lihat order_history_import.md).
+
+    Konteks (order id 32766, customer 31361, 10 September 2026): kasus
+    PERTAMA yang ditemukan genuine -- produk kg (keju timbang) yang memang
+    dijual pecahan, BUKAN anomali Units. User menduga sebagian nilai
+    pecahan bisa jadi hasil "penyesuaian di lapangan"/kalibrasi timbangan
+    kurang presisi (bukan pecahan bisnis yang disengaja) -- endpoint ini
+    dipakai cek SKALA (berapa banyak) & POLA (nilai "bersih" mis. .5/.25 vs
+    "berisik" mis. .042/.137) SEBELUM diputuskan cara permanen handle-nya
+    (skip order / convert unit / dll).
+
+    Pola SAMA PERSIS dengan GET /odoo/stock-fraction (toleransi 1e-6
+    hindari false positive noise float, bukan produk section/note Odoo yg
+    di-skip via display_type).
+    """
+    statuses = [s.strip() for s in invoice_statuses.split(",") if s.strip()] if invoice_statuses else None
+    lines = odoo.get_order_line_quantities(invoice_statuses=statuses)
+
+    per_uom_total: dict = {}
+    per_uom_fractional: dict = {}
+    samples: dict = {}
+
+    for line in lines:
+        uom_field = line.get("product_uom_id") or [None, "(unknown)"]
+        uom_name = uom_field[1] or "(unknown)"
+        qty = line.get("product_uom_qty") or 0
+        per_uom_total[uom_name] = per_uom_total.get(uom_name, 0) + 1
+
+        # toleransi kecil (1e-6) -- hindari false positive dari noise
+        # pembulatan float, bukan produk yang genuinely fractional (SAMA
+        # PERSIS pola GET /odoo/stock-fraction).
+        if abs(qty - round(qty)) > 1e-6:
+            per_uom_fractional[uom_name] = per_uom_fractional.get(uom_name, 0) + 1
+            bucket = samples.setdefault(uom_name, [])
+            if len(bucket) < result_limit:
+                order_field = line.get("order_id") or [None, "?"]
+                product_field = line.get("product_id") or [None, "?"]
+                bucket.append({
+                    "order_id": order_field[0],
+                    "order_name": order_field[1],
+                    "product_name": product_field[1],
+                    "quantity": qty,
+                })
+
+    summary = [
+        {
+            "uom": uom_name,
+            "total_lines": total,
+            "fractional_lines": per_uom_fractional.get(uom_name, 0),
+            "fractional_pct": round(per_uom_fractional.get(uom_name, 0) / total * 100, 1) if total else 0,
+        }
+        for uom_name, total in sorted(per_uom_total.items())
+    ]
+
+    return {
+        "invoice_statuses_scanned": statuses or "SEMUA (tidak difilter)",
+        "total_lines_scanned": len(lines),
+        "summary_per_uom": summary,
+        "fractional_samples": samples,
+    }
 
 
 @router.get("/odoo/stock-fraction")
