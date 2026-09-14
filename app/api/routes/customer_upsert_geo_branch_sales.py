@@ -54,19 +54,20 @@ def upsert_customer_geo_branch_sales(
         ),
     ),
     salesman_ids: str | None = Query(
-        "202600003",
+        "",
         description=(
             "OPSIONAL -- employee_id Salesman di eSuite (dipakai query param "
             "lookup GET /employee?employee_id=...), comma-separated kalau >1. "
-            "DEFAULT 1 kode ('202600003') -- OVERRIDE SEMENTARA UNTUK MASA "
-            "PRE-LIVE (instruksi user 5 September 2026), MENGGANTIKAN default "
-            "3 kode ('202600002,202600003,202600004', instruksi user 28 "
-            "Agustus 2026) selama pre-live. TODO: kembalikan ke 3 kode "
-            "setelah go-live kalau tidak ada instruksi lain. Ganti manual "
-            "kalau customer ini butuh salesman berbeda. Kosongkan (string "
-            "kosong) kalau memang tidak mau kirim sales sama sekali. id+nama "
-            "yang dikirim ke payload di-resolve OTOMATIS dari hasil lookup "
-            "(id INTERNAL eSuite, BUKAN employee_id ini langsung). 🆕 "
+            "🆕 DEFAULT KOSONG (14 September 2026, instruksi user) -- kalau "
+            "tidak diisi, key \"salesmans\" TIDAK dikirim sama sekali "
+            "(partial-merge, salesman existing di eSuite TIDAK ikut ter-"
+            "update/ter-reset). MENGGANTIKAN default lama 1 kode "
+            "('202600003', override sementara pre-live 5 September 2026, "
+            "sebelumnya 3 kode '202600002,202600003,202600004' instruksi 28 "
+            "Agustus 2026) -- default kode salesman tetap itu DIHAPUS. Isi "
+            "manual kalau memang mau set/ganti salesman customer ini. "
+            "id+nama yang dikirim ke payload di-resolve OTOMATIS dari hasil "
+            "lookup (id INTERNAL eSuite, BUKAN employee_id ini langsung). "
             "SEKARANG INDEPENDEN dari branch_external_codes (sebelumnya "
             "wajib diisi bersamaan, instruksi user 7 September 2026) -- "
             "kosongkan branch_external_codes kalau mau mass update SALESMAN "
@@ -109,10 +110,17 @@ def upsert_customer_geo_branch_sales(
     diabaikan di /unmap/customer-sales) -- kalau benar, risiko numpuk ini
     tidak terjadi, tapi belum ada test live yang membuktikan/membantah.
 
-    branch_external_codes & salesman_ids sudah ada DEFAULT (branch
-    "ODOO-COMPANY-2" + 3 salesman tetap yang dipakai hampir semua customer
-    saat ini) supaya tidak perlu diisi manual tiap panggilan -- tetap bisa
-    dioverride atau dikosongkan kalau customer tertentu butuh beda.
+    branch_external_codes punya DEFAULT ("ODOO-COMPANY-2", branch yang
+    dipakai hampir semua customer saat ini) supaya tidak perlu diisi manual
+    tiap panggilan -- tetap bisa dioverride atau dikosongkan kalau customer
+    tertentu butuh beda.
+
+    🆕 14 September 2026: salesman_ids SEKARANG DEFAULT KOSONG (instruksi
+    user -- MENGGANTIKAN default 1 kode tetap "202600003" yang dipakai
+    sementara masa pre-live sejak 5 September 2026). Kalau tidak diisi
+    eksplisit, key "salesmans" TIDAK dikirim -- salesman existing customer
+    di eSuite TIDAK ikut ter-update/ter-reset. Isi manual kalau memang mau
+    set/ganti salesman customer ini.
 
     🆕 7 September 2026: branch_external_codes & salesman_ids SEKARANG
     INDEPENDEN -- SEBELUMNYA kalau salah satu diisi, yang lain WAJIB ikut
