@@ -1,5 +1,16 @@
+from enum import Enum
+
 from fastapi import APIRouter, Query
 from app.services.customer_sales_mapping_service import CustomerSalesMappingService
+
+
+class MappingMode(str, Enum):
+    """UPDATE 14 September 2026 -- Enum (bukan str+pattern) supaya Swagger
+    render param `mode` sebagai select box, bukan input text bebas."""
+
+    reset = "reset"
+    add = "add"
+
 
 router = APIRouter()
 # Router terpisah -- endpoint un-map ke-grup di Swagger tag "Un-Map" sendiri
@@ -48,6 +59,19 @@ def map_customer_sales(
             "(default), nama JUGA di-resolve otomatis."
         ),
     ),
+    mode: MappingMode = Query(
+        MappingMode.reset,
+        description=(
+            "OPSIONAL, default 'reset' (PERILAKU LAMA, tidak breaking) -- "
+            "'reset': salesmans customer DITIMPA total, HANYA berisi hasil "
+            "resolve salesman_ids di request ini. 'add': salesman EXISTING "
+            "di eSuite (per customer, hasil GET /customers) DIPERTAHANKAN + "
+            "salesman baru dari salesman_ids ditambahkan (dedupe by id, "
+            "tidak dobel kalau salesman sama sudah ada). Pakai 'add' kalau "
+            "mau customer punya LEBIH DARI 1 salesman tanpa perlu tau/isi "
+            "ulang id salesman lama secara manual."
+        ),
+    ),
 ):
     """
     Mass mapping Customer -> Branch + Salesman di eSuite SEKALIGUS (field
@@ -69,12 +93,22 @@ def map_customer_sales(
     sales.salesmans[] BUKAN employee_id (salesman_ids) -- WAJIB id INTERNAL
     eSuite, di-resolve otomatis dari GET /employee. GET /employee jadi WAJIB
     dipanggil di setiap request (termasuk saat salesman_names diisi manual).
+
+    UPDATE 14 September 2026 -- param `mode` ("reset"/"add") untuk multi
+    salesman per customer. Default "reset" (perilaku lama, tidak breaking).
+    "add" mempertahankan salesman existing + menambahkan salesman baru
+    (lihat CustomerSalesMappingService.map_to_sales() untuk detail).
+
+    UPDATE 14 September 2026 (2) -- `mode` sekarang Enum (`MappingMode`),
+    tampil sebagai select box "reset"/"add" di Swagger, bukan text input
+    bebas. Nilai yang dikirim ke service tetap str polos (mode.value).
     """
     return service.map_to_sales(
         external_codes=external_codes,
         branch_external_codes=branch_external_codes,
         salesman_ids=salesman_ids,
         salesman_names=salesman_names,
+        mode=mode.value,  # Enum -> str polos, service tetap terima str seperti semula
     )
 
 

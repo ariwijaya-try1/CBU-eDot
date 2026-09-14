@@ -12,9 +12,9 @@ PULL_PAGE_SIZE = 200
 class MassCustomerSalesMappingService:
     """
     🆕 7 September 2026, BARU -- Mass mapping SEMUA customer (yang sudah ada
-    di eSuite) ke 1 SALESMAN yang SAMA sekaligus, KHUSUS masa PRE-LIVE
-    (utility sekali pakai buat percepat setup awal, BUKAN endpoint permanen
-    jangka panjang seperti /mapping/customer-sales).
+    di eSuite) ke SALESMAN sekaligus, KHUSUS masa PRE-LIVE (utility sekali
+    pakai buat percepat setup awal, BUKAN endpoint permanen jangka panjang
+    seperti /mapping/customer-sales).
 
     KONDISI dari user (instruksi eksplisit): customer HANYA eligible di-map
     ke salesman ini kalau branch customer (sales.branchs[] yang SUDAH ada di
@@ -31,7 +31,7 @@ class MassCustomerSalesMappingService:
     balik field yang SAMA PERSIS (beda kasus dari sales.branchs[] Customer
     yang polanya sudah lebih establish di project ini). Kalau field ini
     kosong/nama beda di response nyata, method ini FAIL-FAST dengan pesan
-    jelas (lihat _resolve_salesman()), BUKAN diam-diam skip semua customer.
+    jelas (lihat _resolve_salesmen()), BUKAN diam-diam skip semua customer.
 
     Desain LOKAL-FILTER (bukan per-request-eSuite): pencocokan branch
     customer vs salesman dihitung SELURUHNYA dari data yang sudah di-GET
@@ -43,24 +43,74 @@ class MassCustomerSalesMappingService:
     dengan customer_geolocation_service.py/deactivate endpoints, partial-
     merge upsert eSuite tidak akan reset field lain (branch existing customer
     TIDAK disentuh sama sekali, karena key "branchs" tidak ikut dikirim).
+
+    UPDATE 14 September 2026 -- MULTI salesman + param `mode` ("add"/"reset"),
+    root cause: `salesman_id` TUNGGAL lama selalu OVERWRITE total
+    `salesmans[]` existing customer (payload cuma isi 1 salesman), jadi run
+    kedua dgn salesman lain BUKAN nambah tapi GANTIKAN salesman run pertama
+    -- ditemukan user dari kasus nyata (4 salesman pindah branch, coba
+    tambahkan bertahap, salesman lama ke-hapus tiap run baru). Redesign
+    (dikonfirmasi user via AskUserQuestion, 14 September 2026):
+    - `salesman_id` -> `salesman_ids` (comma-separated, MULTI, employee_id).
+    - `mode="add"` (BARU, JADI DEFAULT -- keputusan eksplisit user, BUKAN
+      rekomendasi awal Claude yang sarankan "reset" demi backward-compat;
+      endpoint ini PRE-LIVE utility TANPA caller existing yang bergantung ke
+      perilaku lama, jadi user pilih default paling sering dibutuhkan) --
+      salesman EXISTING di eSuite per customer (dibaca LANGSUNG dari record
+      hasil `_pull_all_customers()` yang SUDAH di-GET di awal, TANPA call
+      tambahan -- lihat `_salesmans_of()`) DIPERTAHANKAN + salesman baru yang
+      match branch DITAMBAHKAN (dedupe by id). `mode="reset"` -- salesmans
+      customer DITIMPA total, HANYA berisi salesman yang match branch dari
+      request ini (perilaku setara versi lama, tapi generalized ke multi).
+    - Filter branch PER-CUSTOMER (dikonfirmasi user, opsi "Recommended" dari
+      2 opsi yang diajukan): kalau `salesman_ids` isinya salesman dari BEDA
+      branch, 1 customer HANYA dapat subset salesman yang branch-nya BENERAN
+      cocok sama branch customer itu -- BUKAN semua salesman yang diminta
+      (hindari assign salesman salah branch ke customer). Customer yang
+      branch-nya tidak cocok SATU PUN dari `salesman_ids` -- tetap DI-SKIP
+      (reason "branch_mismatch"), sama seperti perilaku lama.
+    - `_salesmans_of()` (BARU) mengasumsikan record `GET /customers` yang
+      sudah ditarik `_pull_all_customers()` juga bawa `sales.salesmans[]`
+      (sibling field dari `sales.branchs[]` yang SUDAH terbukti ada di
+      record yang sama, dipakai `_branch_ids_of()`) -- BELUM eksplisit
+      diverifikasi live utk field spesifik ini, cek response nyata pas
+      dry_run pertama pasca update ini.
     """
 
     def __init__(self):
         self.esuite = EsuiteClient()
 
-    def map_all_to_one_salesman(
+    def map_all_to_salesmen(
         self,
-        salesman_id: str,
+        salesman_ids: str,
+        mode: str = "add",
         limit: int | None = None,
         dry_run: bool = False,
         batch_size: int | None = None,
     ) -> dict:
-        salesman_internal, salesman_branch_ids = self._resolve_salesman(salesman_id)
+        if mode not in ("add", "reset"):
+            raise ValidationError(
+                "mode harus 'add' atau 'reset'",
+                details={"mode": mode},
+            )
+
+        sid_list = [s.strip() for s in salesman_ids.split(",") if s.strip()]
+        if not sid_list:
+            raise ValidationError("salesman_ids wajib diisi minimal 1")
+
+        resolved_salesmen = self._resolve_salesmen(sid_list)
+        # Union SEMUA branch dari salesman yang diminta -- dipakai cuma buat
+        # laporan/ringkasan di response, BUKAN dipakai langsung filter
+        # eligibility (filter sebenarnya PER-CUSTOMER, lihat loop bawah).
+        all_requested_branch_ids: set = set()
+        for r in resolved_salesmen:
+            all_requested_branch_ids |= r["branch_ids"]
 
         all_customers = self._pull_all_customers()
         total_customers = len(all_customers)
 
         eligible_codes: list[str] = []
+        payload_by_code: dict[str, dict] = {}
         skipped: list[dict] = []
         for record in all_customers:
             external_code = record.get("external_code") or ""
@@ -72,18 +122,38 @@ class MassCustomerSalesMappingService:
                 )
                 continue
 
-            if not (customer_branch_ids & salesman_branch_ids):
+            # Filter PER-CUSTOMER (opsi "Recommended" dikonfirmasi user,
+            # 14 September 2026): customer ini cuma dapat SUBSET
+            # salesman_ids yang branch-nya BENERAN cocok -- bukan semua
+            # salesman yang diminta kalau salesman_ids dicampur beda branch.
+            matching_salesmen = [
+                r["internal"] for r in resolved_salesmen if r["branch_ids"] & customer_branch_ids
+            ]
+            if not matching_salesmen:
                 skipped.append(
                     {
                         "external_code": external_code,
                         "reason": "branch_mismatch",
                         "customer_branch_ids": sorted(customer_branch_ids),
-                        "salesman_branch_ids": sorted(salesman_branch_ids),
+                        "requested_salesman_branch_ids": sorted(all_requested_branch_ids),
                     }
                 )
                 continue
 
+            if mode == "add":
+                existing_salesmen = self._salesmans_of(record)
+                existing_ids = {s["id"] for s in existing_salesmen if s.get("id")}
+                final_salesmans = existing_salesmen + [
+                    s for s in matching_salesmen if s.get("id") not in existing_ids
+                ]
+            else:  # mode == "reset"
+                final_salesmans = matching_salesmen
+
             eligible_codes.append(external_code)
+            payload_by_code[external_code] = {
+                "external_code": external_code,
+                "sales": {"salesmans": final_salesmans},
+            }
 
         # limit -- diagnostic aid buat test bertahap (mis. 5 dulu) sebelum
         # full run, pola sama customer_sync_service.py::sync(). Diterapkan
@@ -99,15 +169,15 @@ class MassCustomerSalesMappingService:
         if limit is not None:
             eligible_codes = eligible_codes[:limit]
 
-        payload = [
-            {"external_code": code, "sales": {"salesmans": [salesman_internal]}}
-            for code in eligible_codes
-        ]
+        payload = [payload_by_code[code] for code in eligible_codes]
 
         result: dict = {
-            "salesman_id": salesman_id,
-            "salesman_resolved": salesman_internal,
-            "salesman_branch_ids": sorted(salesman_branch_ids),
+            "salesman_ids": sid_list,
+            "mode": mode,
+            "salesmen_resolved": [
+                {"internal": r["internal"], "branch_ids": sorted(r["branch_ids"])}
+                for r in resolved_salesmen
+            ],
             "total_customers_checked": total_customers,
             "total_eligible_found": total_eligible_found,
             "eligible_count": len(eligible_codes),
@@ -165,36 +235,47 @@ class MassCustomerSalesMappingService:
         return result
 
     # ------------------------------------------------------------------
-    def _resolve_salesman(self, salesman_id: str) -> tuple[dict, set]:
+    def _resolve_salesmen(self, sid_list: list[str]) -> list[dict]:
         """
-        Resolve 1 salesman_id (employee_id) -> ({"id","name"} internal
-        eSuite, set branch_id yang jadi tempat salesman ini terdaftar).
-        Pola resolve SAMA dengan _resolve_salesmen() di service lain (GET
-        /employee?employee_id=...), tapi di sini juga ambil "branches[]".
-        """
-        result = self.esuite.pull_by_param("employee", "employee_id", salesman_id)
-        records = result.get("data") or []
-        if not records:
-            raise ValidationError(
-                f"salesman_id '{salesman_id}' tidak ditemukan di eSuite (GET "
-                "/employee kosong) -- cek employee_id benar",
-                details={"salesman_id": salesman_id},
-            )
-        record = records[0]
-        salesman_internal = {"id": record.get("id") or "", "name": record.get("name") or ""}
+        Resolve BANYAK salesman_id (employee_id) -> list [{"internal":
+        {"id","name"}, "branch_ids": set}, ...], urutan sama dengan
+        sid_list. Pola resolve SAMA dengan _resolve_salesmen() di service
+        lain (GET /employee?employee_id=...), tapi di sini juga ambil
+        "branches[]" per salesman.
 
-        branch_ids = {
-            b.get("id") for b in (record.get("branches") or []) if b.get("id")
-        }
-        if not branch_ids:
-            raise ValidationError(
-                f"Salesman '{salesman_id}' tidak punya branches[] di response GET "
-                "/employee (atau field 'branches' tidak ada/nama beda -- BELUM "
-                "dikonfirmasi vendor, lihat docstring class) -- mass mapping "
-                "dihentikan karena tidak ada customer yang bisa match branch.",
-                details={"salesman_id": salesman_id, "employee_record": record},
-            )
-        return salesman_internal, branch_ids
+        FAIL-FAST per salesman (SAMA seperti perilaku lama _resolve_salesman()
+        tunggal) -- kalau SATU SAJA dari salesman_ids tidak ketemu ATAU tidak
+        punya branches[], SELURUH request dihentikan dgn error jelas (bukan
+        skip diam-diam salesman itu doang) -- konsisten dgn convention
+        project ini (surface masalah data eksplisit, jangan degrade diam2).
+        """
+        resolved = []
+        for sid in sid_list:
+            result = self.esuite.pull_by_param("employee", "employee_id", sid)
+            records = result.get("data") or []
+            if not records:
+                raise ValidationError(
+                    f"salesman_id '{sid}' tidak ditemukan di eSuite (GET "
+                    "/employee kosong) -- cek employee_id benar",
+                    details={"salesman_id": sid},
+                )
+            record = records[0]
+            salesman_internal = {"id": record.get("id") or "", "name": record.get("name") or ""}
+
+            branch_ids = {
+                b.get("id") for b in (record.get("branches") or []) if b.get("id")
+            }
+            if not branch_ids:
+                raise ValidationError(
+                    f"Salesman '{sid}' tidak punya branches[] di response GET "
+                    "/employee (atau field 'branches' tidak ada/nama beda -- BELUM "
+                    "dikonfirmasi vendor, lihat docstring class) -- mass mapping "
+                    "dihentikan karena salesman ini tidak akan pernah bisa match "
+                    "branch customer manapun.",
+                    details={"salesman_id": sid, "employee_record": record},
+                )
+            resolved.append({"internal": salesman_internal, "branch_ids": branch_ids})
+        return resolved
 
     def _pull_all_customers(self) -> list[dict]:
         """GET /customers, paginated, SEMUA halaman (bukan cuma sampai code tertentu ketemu)."""
@@ -222,3 +303,18 @@ class MassCustomerSalesMappingService:
         """
         branchs = (customer_record.get("sales") or {}).get("branchs") or []
         return {b.get("id") for b in branchs if b.get("id")}
+
+    @staticmethod
+    def _salesmans_of(customer_record: dict) -> list[dict]:
+        """
+        Ambil salesmans[] EXISTING dari 1 record GET /customers -- dipakai
+        KHUSUS mode="add" (🆕 14 September 2026), supaya salesman lama TIDAK
+        ke-reset saat nambah salesman baru. Field `sales.salesmans[]`,
+        sibling dari `sales.branchs[]` yang dipakai `_branch_ids_of()` --
+        TIDAK BUTUH call tambahan, record ini SUDAH di-GET oleh
+        `_pull_all_customers()` di awal `map_all_to_salesmen()`.
+
+        Return: list apa adanya dari eSuite ([{"id","name"}, ...]) -- []
+        kalau customer belum punya salesman.
+        """
+        return (customer_record.get("sales") or {}).get("salesmans") or []

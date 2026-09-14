@@ -40,6 +40,29 @@ class CustomerSalesMappingService:
     diisi manual) -- `salesman_names` TIDAK BISA lagi jadi fallback total
     kalau GET /employee down (beda dari niat awal), karena id internal
     tidak ada sumber lain. Lihat `_resolve_salesmen()` untuk detail.
+
+    UPDATE 14 September 2026 -- param baru `mode` ("reset"/"add") di
+    map_to_sales(). Kebutuhan: customer bisa punya LEBIH DARI 1 salesman
+    (mis. tambah salesman baru tanpa lepas salesman lama yang masih
+    valid). Sebelum ini, tiap panggilan SELALU replace total salesmans[]
+    dengan isi `salesman_ids` request (tidak ada cara "nambah" tanpa tau
+    & ikut nulis ulang id salesman lama secara manual di request).
+
+    - `mode="reset"` (default, PERILAKU LAMA, tidak ada breaking change
+      utk caller existing) -- salesmans[] di payload = HANYA hasil
+      resolve `salesman_ids` request ini, menimpa total salesmans
+      existing di eSuite.
+    - `mode="add"` -- salesmans[] di payload = salesman existing (hasil
+      GET /customers by external_code, per code) DIGABUNG dengan
+      salesman baru dari `salesman_ids` (dedupe by `id` internal eSuite,
+      existing tidak diduplikasi kalau kebetulan sama). Extra 1x GET
+      /customers per external_code HANYA dipanggil saat mode="add" (lihat
+      `_get_existing_salesmen()`).
+
+    `branchs_payload` TIDAK terpengaruh mode ini -- tetap APA ADANYA dari
+    `branch_external_codes` request (tidak di-merge dengan branch existing),
+    konsisten dengan aturan lama di atas (branch WAJIB diisi eksplisit tiap
+    call).
     """
 
     def __init__(self):
@@ -51,10 +74,17 @@ class CustomerSalesMappingService:
         branch_external_codes: str,
         salesman_ids: str,
         salesman_names: str | None = None,
+        mode: str = "reset",
     ) -> dict:
         codes = [c.strip() for c in external_codes.split(",") if c.strip()]
         if not codes:
             raise ValidationError("external_codes wajib diisi minimal 1")
+
+        if mode not in ("reset", "add"):
+            raise ValidationError(
+                "mode harus 'reset' atau 'add'",
+                details={"mode": mode},
+            )
 
         branch_codes = [b.strip() for b in branch_external_codes.split(",") if b.strip()]
         if not branch_codes:
@@ -116,20 +146,39 @@ class CustomerSalesMappingService:
             for c in branch_codes
         ]
 
-        payload = [
-            {
-                "external_code": code,
-                "sales": {"branchs": branchs_payload, "salesmans": salesmans_payload},
-            }
-            for code in codes
-        ]
+        # mode="add" -- salesmans[] per customer = existing (GET /customers,
+        # per external_code -- existing salesman BISA BEDA antar customer
+        # walau salesman_ids request-nya sama) + salesman baru dari request,
+        # dedupe by "id" internal eSuite (existing menang urutan duluan,
+        # salesman baru yang id-nya belum ada baru ditambahkan). mode="reset"
+        # (default) -- tidak ada perubahan, salesmans_payload APA ADANYA dari
+        # request seperti perilaku lama.
+        payload = []
+        salesmans_per_code: dict[str, list[dict]] = {}
+        for code in codes:
+            code_salesmans = salesmans_payload
+            if mode == "add":
+                existing_salesmen = self._get_existing_salesmen(code)
+                existing_ids = {s["id"] for s in existing_salesmen if s.get("id")}
+                code_salesmans = existing_salesmen + [
+                    s for s in salesmans_payload if s.get("id") not in existing_ids
+                ]
+            salesmans_per_code[code] = code_salesmans
+            payload.append(
+                {
+                    "external_code": code,
+                    "sales": {"branchs": branchs_payload, "salesmans": code_salesmans},
+                }
+            )
         esuite_result = self.esuite.push("customers", event="upsert", data=payload)
 
         return {
             "mapped_count": len(payload),
             "external_codes": codes,
+            "mode": mode,
             "branchs_resolved": branchs_payload,
-            "salesmans": salesmans_payload,
+            "salesmans": salesmans_payload,  # salesman dari REQUEST ini saja (tidak berubah, backward-compat)
+            "salesmans_per_code": salesmans_per_code,  # salesman FINAL yang dikirim ke eSuite per customer (beda per code kalau mode="add")
             "payload_sent": payload,
             "esuite_response": esuite_result,
         }
@@ -233,6 +282,26 @@ class CustomerSalesMappingService:
             record = records[0]
             resolved.append({"id": record.get("id") or "", "name": record.get("name") or ""})
         return resolved
+
+    def _get_existing_salesmen(self, external_code: str) -> list[dict]:
+        """
+        Cek salesmans[] yang SUDAH ada di eSuite untuk 1 customer -- dipakai
+        KHUSUS mode="add" (lihat map_to_sales()), supaya salesman lama TIDAK
+        ikut ke-reset saat nambah salesman baru. 1x GET /customers by
+        external_code per customer, pola SAMA dengan
+        CustomerUpsertGeoBranchSalesService._get_existing_branches() (lihat
+        file itu untuk alasan pola pull_by_param() vs full-scan).
+
+        Return: list salesmans[] apa adanya dari eSuite ([{"id","name"}, ...])
+        -- [] kalau customer belum ketemu di eSuite ATAU ketemu tapi belum
+        punya salesman.
+        """
+        result = self.esuite.pull_by_param("customers", "external_code", external_code)
+        records = result.get("data") or []
+        if not records:
+            return []
+        record = records[0]
+        return (record.get("sales") or {}).get("salesmans") or []
 
     def _resolve_branches(self, codes_wanted: set) -> dict:
         """
