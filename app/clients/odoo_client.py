@@ -68,6 +68,25 @@ class OdooClient:
             {"fields": ["id", "name", "partner_id"]},
         )
 
+    def get_all_companies(self):
+        """
+        GET res.company TANPA filter IN_SCOPE_COMPANY_NAMES (24 September
+        2026) -- dipakai GET /odoo/branch (diagnostic-only) buat lihat
+        SEMUA company yang boleh diakses akun API bridge, termasuk yang
+        belum/tidak masuk scope. Hasil tetap dibatasi hak akses user Odoo
+        (company di luar Allowed Companies akun API tidak akan muncul).
+        """
+        return self._execute(
+            "res.company",
+            "search_read",
+            [[]],
+            {"fields": ["id", "name", "parent_id", "partner_id"], "order": "id"},
+        )
+
+    def count_records(self, model: str, conditions: list) -> int:
+        """search_count generik (24 September 2026, dipakai GET /odoo/branch)."""
+        return self._execute(model, "search_count", [conditions])
+
     def get_warehouses(self, company_ids: list, ids: list | None = None):
         """
         Sumber data untuk entity Warehouse di eSuite.
@@ -720,9 +739,14 @@ class OdooClient:
         customer_only: bool = False,
         supplier_only: bool = False,
         active_only: bool = True,
+        company_id: int | None = None,
     ):
         """
         GET mentah res.partner -- dipakai GET /odoo/contact & GET /odoo/customer.
+
+        company_id (OPSIONAL, 24 September 2026): filter res.partner.company_id.
+        None = tidak difilter (behavior lama). 0 = kontak TANPA company
+        (company_id kosong/shared). >0 = kontak milik company itu.
         BEDA dari get_customers() (dipakai proses sync /sync/customers):
         method ini buat inspeksi manual/fleksibel, bukan proses sync.
 
@@ -743,6 +767,8 @@ class OdooClient:
             conditions.append(("active", "=", True))
         if name:
             conditions.append(("name", "ilike", name))
+        if company_id is not None:
+            conditions.append(("company_id", "=", company_id or False))
         domain = [conditions] if conditions else [[]]
 
         kwargs = {

@@ -67,13 +67,74 @@ def get_odoo_uom(
 def get_odoo_customer(
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     name: str | None = Query(default=None, description="OPSIONAL -- filter name ilike."),
+    company_id: int | None = Query(default=None, ge=0, description="OPSIONAL -- filter res.company id (lihat GET /odoo/branch). 0 = customer TANPA company."),
 ):
     """
     GET mentah res.partner dengan customer_rank > 0 (kontak yang pernah/
     bisa dianggap Customer) + active=True -- filter SAMA dengan proses sync
     (POST /sync/customers), tapi endpoint ini murni buat cek data.
+
+    company_id (24 September 2026): cek customer milik company tertentu,
+    mis. customer ber-company SAP (branch produksi tanpa sales) atau
+    customer tanpa company (company_id=0, tidak akan dapat branch eSuite).
     """
-    return odoo.get_contacts(limit=limit, name=name, customer_only=True)
+    return odoo.get_contacts(limit=limit, name=name, customer_only=True, company_id=company_id)
+
+
+@router.get("/odoo/branch")
+def get_odoo_branch(
+    include_counts: bool = Query(default=True, description="Hitung jumlah customer/warehouse/pricelist per company (beberapa search_count ke Odoo)."),
+):
+    """
+    GET res.company (sumber Branch eSuite) TANPA filter scope -- 24
+    September 2026. Semua endpoint lain baca res.company lewat filter
+    IN_SCOPE_COMPANY_NAMES, jadi company di luar scope (mis. Sunshine Boga
+    Utama/Jakarta sebelum scope.py diubah) tidak kelihatan. Endpoint ini
+    buat cek: company apa saja yang BISA diakses akun API bridge, mana
+    yang in_scope, & isinya (customer/warehouse/pricelist) per company.
+
+    in_scope dihitung lokal dgn aturan SAMA get_companies() (ilike =
+    substring case-insensitive terhadap IN_SCOPE_COMPANY_NAMES).
+    Hitungan customer = customer_rank > 0 & active (filter sama /sync/customers).
+    """
+    companies = odoo.get_all_companies()
+    scope_lower = [n.lower() for n in IN_SCOPE_COMPANY_NAMES]
+
+    data = []
+    for c in companies:
+        row = {
+            "id": c["id"],
+            "name": c["name"],
+            "external_code": f"ODOO-COMPANY-{c['id']}",
+            "parent_id": c.get("parent_id"),
+            "in_scope": any(n in c["name"].lower() for n in scope_lower),
+        }
+        if include_counts:
+            row["customer_count"] = odoo.count_records(
+                "res.partner",
+                [("customer_rank", ">", 0), ("active", "=", True), ("company_id", "=", c["id"])],
+            )
+            row["warehouse_count"] = odoo.count_records(
+                "stock.warehouse", [("active", "=", True), ("company_id", "=", c["id"])]
+            )
+            row["pricelist_count"] = odoo.count_records(
+                "product.pricelist", [("active", "=", True), ("company_id", "=", c["id"])]
+            )
+        data.append(row)
+
+    result = {"in_scope_company_names": IN_SCOPE_COMPANY_NAMES, "total": len(data), "data": data}
+    if include_counts:
+        # Record TANPA company (shared) -- customer tanpa company tidak dapat branch eSuite
+        result["without_company"] = {
+            "customer_count": odoo.count_records(
+                "res.partner",
+                [("customer_rank", ">", 0), ("active", "=", True), ("company_id", "=", False)],
+            ),
+            "pricelist_count": odoo.count_records(
+                "product.pricelist", [("active", "=", True), ("company_id", "=", False)]
+            ),
+        }
+    return result
 
 
 @router.get("/odoo/contact")

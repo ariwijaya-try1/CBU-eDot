@@ -16,10 +16,16 @@
 # terpisah dari revisi sebelumnya) DIHAPUS karena sekarang redundan --
 # lihat pricelist_progress.md untuk riwayat keputusan lengkap.
 #
-# Company ke-4 (agro & branch office luar kota) TETAP di luar scope --
-# tidak disebut eksplisit ada nama, tapi tidak masuk list ini.
+# REVISI 24 September 2026 -- scope jadi 4 company: "Sunshine Boga Utama"
+# (SBU, Jakarta, res.company id 4) ditambahkan supaya eDot bisa dipakai di
+# Jakarta. Klarifikasi user: "agro" = SAP (branch produksi, tanpa sales),
+# "branch office luar kota" = SBU. Company ke-5 "Sunshine Group Indonesia,
+# PT" (id 5, tanpa customer/warehouse/pricelist) TETAP di luar scope.
+# Match pakai ilike (substring) -- "Sunshine Boga Utama" tidak bentrok
+# dengan "Cahaya Boga Utama" (dicek dari hasil GET /odoo/branch).
 IN_SCOPE_COMPANY_NAMES = [
     "Cahaya Boga Utama",
     "Sunshine Food and Co",
     "Sunshine Agri Pratama",
+    "Sunshine Boga Utama",
 ]

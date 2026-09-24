@@ -156,6 +156,14 @@ def sync_order_history(
     ),
 ):
     """
+    ⚠️ STATUS 24 September 2026 -- TIDAK DIPAKAI (dipertahankan, belum dihapus).
+    Tujuan awal: import order history PRE-EXISTING (di luar eDot) dengan 1
+    salesman hardcode SALESMAN_EXTERNAL_CODE="SALES-TESTING-001". Ternyata
+    kebutuhan sales sebenarnya = history order PER OUTLET, sedangkan eDot
+    baru menyediakan history PER SALES -- jadi hasil import ini tidak
+    menjawab kebutuhan. JANGAN dipakai untuk rollout (termasuk Jakarta/SBU)
+    sebelum ada keputusan baru.
+
     v1 (28 Agustus 2026) -- push riwayat order ke webhook eDot BARU
     `POST /v1/webhook/orders/import` (endpoint TERPISAH dari `/sales-order`
     yang sudah ada di Postman collection, lihat project memory
