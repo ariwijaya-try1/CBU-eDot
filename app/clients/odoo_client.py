@@ -560,9 +560,74 @@ class OdooClient:
                     "id", "name", "company_type", "phone", "email",
                     "street", "partner_latitude", "partner_longitude",
                     "property_product_pricelist", "industry_id", "company_id",
+                    # village_id (29 September 2026) -- Many2one ke res.village
+                    # (modul regional ms_l10n_id_localization), dipakai
+                    # customer_sync_service.py::_resolve_admin_area_map() buat
+                    # isi addresses[].administrative_level eSuite. Hierarki
+                    # kecamatan/kota/provinsi DITELUSURI dari desa (lihat
+                    # get_village_hierarchy()), bukan dari city_id/subdistrict_id
+                    # partner -- desa = level paling detail & 1 sumber saja.
+                    "village_id",
                 ]
             },
         )
+
+    def get_village_hierarchy(self, village_ids: list[int]) -> dict[int, dict]:
+        """
+        🆕 29 September 2026 -- telusuri hierarki wilayah dari res.village
+        (modul regional ms_l10n_id_localization) ke atas: desa ->
+        res.subdistrict (Kecamatan) -> res.city (Kab/Kota) ->
+        res.country.state (Provinsi). Field relasi dikonfirmasi user via
+        debug tooltip: res.village.subdistrict_id, res.subdistrict.city_id,
+        res.city.state_id.
+
+        4x search_read bulk (1 per level, BUKAN per customer). Pakai field
+        `name` tiap model (BUKAN display_name many2one -- display_name
+        res.country.state = "Bali (ID)", ada suffix kode negara).
+
+        Return: {village_id: {"province", "city", "district", "village"}}
+        -- desa yang rantai induknya tidak lengkap TIDAK ada di hasil.
+        """
+        if not village_ids:
+            return {}
+
+        def read(model: str, ids, fields: list) -> dict[int, dict]:
+            rows = self._execute(
+                model, "search_read", [[("id", "in", list(ids))]], {"fields": fields}
+            )
+            return {r["id"]: r for r in rows}
+
+        villages = read("res.village", village_ids, ["name", "subdistrict_id"])
+        subs = read(
+            "res.subdistrict",
+            {v["subdistrict_id"][0] for v in villages.values() if v.get("subdistrict_id")},
+            ["name", "city_id"],
+        )
+        cities = read(
+            "res.city",
+            {s["city_id"][0] for s in subs.values() if s.get("city_id")},
+            ["name", "state_id"],
+        )
+        states = read(
+            "res.country.state",
+            {c["state_id"][0] for c in cities.values() if c.get("state_id")},
+            ["name"],
+        )
+
+        result: dict[int, dict] = {}
+        for vid, v in villages.items():
+            sub = subs.get(v["subdistrict_id"][0]) if v.get("subdistrict_id") else None
+            city = cities.get(sub["city_id"][0]) if sub and sub.get("city_id") else None
+            state = states.get(city["state_id"][0]) if city and city.get("state_id") else None
+            if not (sub and city and state):
+                continue
+            result[vid] = {
+                "province": state["name"],
+                "city": city["name"],
+                "district": sub["name"],
+                "village": v["name"],
+            }
+        return result
 
     def get_customer_ids(self) -> list[int]:
         """
@@ -1297,6 +1362,54 @@ class OdooClient:
             tmpl_id = r["product_tmpl_id"][0]
             result.setdefault(tmpl_id, []).append(r["id"])
         return result
+
+    # ------------------------------------------------------------------
+    # Delivery Route (2 Oktober 2026) -- dipakai GET /odoo/delivery-route
+    # (diagnostic-only, read-only). Sumber: field custom Odoo Studio
+    # x_studio_delivery_route. TIDAK dipakai proses sync manapun.
+    # ------------------------------------------------------------------
+
+    def get_field_info(self, model: str, field: str) -> dict | None:
+        """
+        Metadata 1 field (label, type, relation, selection) via fields_get.
+        Return None kalau field TIDAK ADA di model itu (fields_get cuma
+        mengabaikan nama field yang tidak dikenal, bukan error).
+        Dipakai supaya tipe field Studio tidak perlu ditebak di kode.
+        """
+        info = self._execute(
+            model,
+            "fields_get",
+            [[field]],
+            {"attributes": ["string", "type", "relation", "selection"]},
+        )
+        return (info or {}).get(field)
+
+    def get_customer_field_values(self, field: str, company_id: int | None = None):
+        """
+        Ambil nilai 1 field dari SEMUA customer (customer_rank > 0 & active,
+        filter sama /sync/customers) yang field-nya TERISI. Cuma 2 kolom
+        (id + field) supaya ringan walau tanpa limit.
+        company_id: None = semua, 0 = tanpa company, >0 = company itu
+        (aturan sama get_contacts()).
+        """
+        conditions = [
+            ("customer_rank", ">", 0),
+            ("active", "=", True),
+            (field, "!=", False),
+        ]
+        if company_id is not None:
+            conditions.append(("company_id", "=", company_id or False))
+
+        return self._execute("res.partner", "search_read", [conditions], {"fields": ["id", field]})
+
+    def get_record_names(self, model: str) -> dict[int, str]:
+        """
+        {id: display_name} SEMUA record 1 model master kecil (mis. model
+        rute tujuan many2one x_studio_delivery_route). Jangan dipakai utk
+        model besar (tanpa limit).
+        """
+        records = self._execute(model, "search_read", [[]], {"fields": ["id", "display_name"], "order": "id"})
+        return {r["id"]: r["display_name"] for r in records}
 
     @staticmethod
     def _name_in_domain(names: list, op: str = "ilike"):

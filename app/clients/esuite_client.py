@@ -127,6 +127,22 @@ class EsuiteClient:
         )
         return self._handle_response(response, request_id)
 
+    def pull_with_params(self, entity_path: str, params: dict) -> dict:
+        """
+        🆕 29 September 2026 -- GET (pull) dengan BEBERAPA query param
+        sekaligus (pull_by_param() cuma 1 param). Dipakai
+        customer_sync_service.py::_lookup_admin_area() utk
+        GET /administrative-areas?level=3&keyword=...&page=..&limit=..
+        Response bentuk {"data": [...], "meta": {...}} sama seperti pull().
+        """
+        raw_body = b""
+        request_id = uuid.uuid4().hex
+        headers = self._headers(raw_body, request_id)
+
+        url = f"{self.base_url}/{entity_path}"
+        response = self._safe_request("GET", url, headers=headers, params=params)
+        return self._handle_response(response, request_id)
+
     def find_by_external_codes(
         self, entity_path: str, codes: set[str], page_size: int = 200
     ) -> dict[str, dict]:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 from app.clients.odoo_client import OdooClient
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import NotFoundError, OdooRPCError, ValidationError
 from app.core.scope import IN_SCOPE_COMPANY_NAMES
 
 router = APIRouter()
@@ -193,6 +193,105 @@ def get_odoo_industry(
     mapping/logic sync-nya.
     """
     return odoo.get_industries(limit=limit)
+
+
+# Delivery Route (2 Oktober 2026) -- field custom Odoo Studio di Contact.
+# Model res.partner = ASUMSI (pola sama x_studio_sales_team); kalau field
+# ternyata di model lain, endpoint balas 404 dgn pesan jelas (bukan data salah).
+DELIVERY_ROUTE_MODEL = "res.partner"
+DELIVERY_ROUTE_FIELD = "x_studio_delivery_route"
+
+
+@router.get("/odoo/delivery-route")
+def get_odoo_delivery_route(
+    company_id: int | None = Query(default=None, ge=0, description="OPSIONAL -- hitung customer milik res.company id ini saja (lihat GET /odoo/branch). 0 = customer TANPA company."),
+):
+    """
+    GET daftar Delivery Route dari Odoo (field Studio `x_studio_delivery_route`
+    di Contact) + jumlah customer per rute -- 2 Oktober 2026, diagnostic-only
+    (read-only, bukan bagian proses sync).
+
+    Tipe field dibaca dari Odoo (fields_get), tidak di-hardcode:
+    - many2one/many2many -> `value` = id record rute, `name` = nama rute.
+      Rute yang belum dipakai customer manapun tetap muncul (customer_count 0).
+    - selection -> `value` = key, `name` = label. Semua opsi muncul.
+    - char/lainnya -> `value` = `name` = teks apa adanya (cuma yang dipakai customer).
+
+    Hitungan customer = customer_rank > 0 & active (filter sama /sync/customers).
+    """
+    field = DELIVERY_ROUTE_FIELD
+    info = odoo.get_field_info(DELIVERY_ROUTE_MODEL, field)
+    if not info:
+        raise NotFoundError(
+            f"Field '{field}' tidak ditemukan di model '{DELIVERY_ROUTE_MODEL}' (atau akun API tidak punya akses)",
+            details={"model": DELIVERY_ROUTE_MODEL, "field": field},
+        )
+
+    field_type = info.get("type")
+    relation = info.get("relation") or None
+    is_relational = field_type in ("many2one", "many2many")
+
+    # 1) Daftar rute "master" (termasuk yang belum dipakai customer)
+    names: dict = {}
+    master_readable = None  # None = tidak relevan (bukan field relasi)
+    if is_relational and relation:
+        try:
+            names = odoo.get_record_names(relation)
+            master_readable = True
+        except OdooRPCError:
+            # Akun API tidak punya hak baca model rute -- nama tetap bisa
+            # didapat dari nilai many2one di customer ([id, name]) di bawah.
+            master_readable = False
+    elif field_type == "selection":
+        names = {key: label for key, label in (info.get("selection") or [])}
+
+    # 2) Hitung customer per rute
+    counts: dict = {}
+    partners = odoo.get_customer_field_values(field, company_id=company_id)
+    for p in partners:
+        raw = p.get(field)
+        if field_type == "many2one":
+            # many2one dari search_read = [id, display_name]
+            values = [raw[0]]
+            names.setdefault(raw[0], raw[1])
+        elif field_type == "many2many":
+            values = raw  # list id
+        else:
+            values = [raw]
+        for v in values:
+            counts[v] = counts.get(v, 0) + 1
+
+    # 3) Gabung master + yang dipakai customer
+    data = [
+        {
+            "value": v,
+            # .get(v) -> None kalau nama tidak diketahui (many2many + master tidak terbaca);
+            # field non-relasi (char) pakai teksnya sendiri sebagai nama.
+            "name": names.get(v) if (is_relational or field_type == "selection") else v,
+            "customer_count": counts.get(v, 0),
+        }
+        for v in set(names) | set(counts)
+    ]
+    data.sort(key=lambda r: str(r["name"] or "").lower())
+
+    customer_conditions = [("customer_rank", ">", 0), ("active", "=", True)]
+    if company_id is not None:
+        customer_conditions.append(("company_id", "=", company_id or False))
+    total_customers = odoo.count_records("res.partner", customer_conditions)
+
+    return {
+        "model": DELIVERY_ROUTE_MODEL,
+        "field": field,
+        "field_label": info.get("string"),
+        "field_type": field_type,
+        "relation": relation,
+        "master_readable": master_readable,
+        "company_id": company_id,
+        "total": len(data),
+        "customers_with_route": len(partners),
+        "customers_without_route": total_customers - len(partners),
+        "data": data,
+    }
 
 
 @router.get("/odoo/salesperson")

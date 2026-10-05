@@ -79,6 +79,18 @@ CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX = "ODOO-CONTACT-INDUSTRY-"
 # berubah, prefix ini WAJIB ikut diubah juga.
 BRANCH_EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
 
+# Wilayah administratif (29 September 2026) -- keputusan user: lookup LIVE ke
+# eSuite GET /administrative-areas + cache, BUKAN file mapping/tabel baru
+# (lihat _resolve_admin_area_map()). Cache level MODUL (hidup selama proses
+# FastAPI jalan, hilang saat restart/redeploy) -- key = jalur nama Odoo yang
+# sudah dinormalisasi "PROVINSI|KOTA|KECAMATAN|DESA", value =
+# administrative_level[] siap kirim. HANYA hasil yang MATCH yang di-cache;
+# not_found/ambiguous dicoba ulang tiap sync (supaya perbaikan data di Odoo/
+# eSuite langsung kepakai tanpa restart).
+_ADMIN_AREA_CACHE: dict[str, list[dict]] = {}
+ADMIN_AREA_LOOKUP_LIMIT = 100  # per page ke eSuite (default eSuite cuma 10)
+ADMIN_AREA_MAX_PAGES = 20  # pengaman loop paging (nama desa umum bisa ratusan hasil)
+
 # Prefix external_code Pricelist -- HARUS SAMA PERSIS dengan
 # EXTERNAL_CODE_PREFIX di pricelist_sync_service.py (didefinisikan ulang di
 # sini, bukan import silang, konsisten dgn pola BRANCH_EXTERNAL_CODE_PREFIX
@@ -166,8 +178,14 @@ class CustomerSyncService:
         # customer di batch ini, lihat _resolve_price_list_map() utk detail.
         price_list_map, unresolved_price_lists = self._resolve_price_list_map(customers)
 
+        # administrative_level auto-resolve (29 September 2026) -- res.partner
+        # .village_id (modul regional Odoo) -> wilayah eSuite, lookup live +
+        # cache per desa unik (bukan per customer), lihat
+        # _resolve_admin_area_map() utk detail.
+        admin_area_map, admin_area_report = self._resolve_admin_area_map(customers)
+
         payload = [
-            self._to_esuite_payload(c, group_map, branch_map, price_list_map)
+            self._to_esuite_payload(c, group_map, branch_map, price_list_map, admin_area_map)
             for c in customers
         ]
 
@@ -308,6 +326,12 @@ class CustomerSyncService:
         # bukan fail-fast).
         if unresolved_price_lists:
             result["customer_price_list_unresolved"] = sorted(unresolved_price_lists)
+
+        # administrative_area -- 🆕 29 September 2026, SELALU ada (ringkasan).
+        # Customer yang desanya tidak ketemu/ambigu di eSuite TETAP ke-upsert
+        # tanpa administrative_level (keputusan user, bukan fail-fast) --
+        # detailnya di "unresolved" supaya bisa diperbaiki di Odoo.
+        result["administrative_area"] = admin_area_report
 
         # name_search -- HANYA ada kalau param `names` dipakai (additive,
         # tidak mengubah struktur response untuk pemakaian external_codes/
@@ -761,6 +785,7 @@ class CustomerSyncService:
         group_map: dict[int, dict] | None = None,
         branch_map: dict[int, dict] | None = None,
         price_list_map: dict[int, dict] | None = None,
+        admin_area_map: dict[int, list[dict]] | None = None,
     ) -> dict:
         payload = {
             "name": customer["name"],
@@ -817,8 +842,9 @@ class CustomerSyncService:
             "email": customer.get("email") or "",
             # addresses -- ditambahkan 24 Agustus 2026 atas instruksi user,
             # lihat _to_esuite_address() untuk detail field & keputusan
-            # administrative_level (sengaja TIDAK dikirim, PENDING vendor).
-            "addresses": [self._to_esuite_address(customer)],
+            # administrative_level (REVISI 29 September 2026: SEKARANG
+            # dikirim kalau desa customer ke-resolve, lihat admin_area_map).
+            "addresses": [self._to_esuite_address(customer, admin_area_map)],
         }
 
         # customer_groups -- auto-resolve dari res.partner.industry_id (4
@@ -858,7 +884,9 @@ class CustomerSyncService:
 
         return payload
 
-    def _to_esuite_address(self, customer: dict) -> dict:
+    def _to_esuite_address(
+        self, customer: dict, admin_area_map: dict[int, list[dict]] | None = None
+    ) -> dict:
         """
         Bangun 1 objek address dari data alamat res.partner (street/
         partner_latitude/partner_longitude -- field sama yang dipakai
@@ -887,6 +915,13 @@ class CustomerSyncService:
           ribuan). Kalau ternyata field ini mandatory di endpoint /customers,
           upsert akan reject -- itu jadi bukti konkret buat tanya vendor cara
           resolve yang benar, keputusan user supaya tidak nebak sekarang.
+          ⛔ SUPERSEDED 29 September 2026 (keputusan user): Odoo sudah
+          adopsi modul regional (4 level) -> "administrative_level" DIKIRIM
+          kalau desa customer ke-resolve di admin_area_map (lihat
+          _resolve_admin_area_map()); kalau tidak ke-resolve, key TIDAK
+          disisipkan (address tetap terkirim seperti sebelumnya). Field lama
+          province/city/district/sub_district deprecated (dev eSuite, 22
+          September) -- TIDAK dikirim.
         """
         address = {
             "id": "",
@@ -902,4 +937,176 @@ class CustomerSyncService:
             address["longitude"] = lon
             address["latitude"] = lat
 
+        levels = (admin_area_map or {}).get(customer.get("id"))
+        if levels:
+            address["administrative_level"] = levels
+
         return address
+
+    # ------------------------------------------------------------------
+    # Wilayah administratif (29 September 2026)
+    # ------------------------------------------------------------------
+    def _resolve_admin_area_map(
+        self, customers: list[dict]
+    ) -> tuple[dict[int, list[dict]], dict]:
+        """
+        res.partner.village_id (Odoo, modul regional) -> administrative_level[]
+        eSuite, keputusan user 29 September 2026 (lookup LIVE + cache).
+
+        Alur:
+        1. Kumpulkan desa UNIK dari customer batch ini (bukan per customer).
+        2. Telusuri nama provinsi/kota/kecamatan/desa di Odoo
+           (OdooClient.get_village_hierarchy(), 4 query bulk).
+        3. Per desa: cek _ADMIN_AREA_CACHE; kalau belum ada, cari ke eSuite
+           (_lookup_admin_area()) -- match kalau 4 nama cocok setelah
+           dinormalisasi.
+        4. Desa yang tidak ketemu/ambigu/error -> dilaporkan, customer-nya
+           TETAP ke-upsert tanpa administrative_level (keputusan user).
+
+        Return: ({partner_id: administrative_level[]}, report)
+        """
+        report = {
+            "resolved_customers": 0,
+            "customers_without_village_in_odoo": 0,
+            "unresolved": [],
+        }
+
+        customers_by_village: dict[int, list[int]] = {}
+        for c in customers:
+            village = c.get("village_id")  # many2one: [id, display_name] / False
+            if village:
+                customers_by_village.setdefault(village[0], []).append(c["id"])
+            else:
+                report["customers_without_village_in_odoo"] += 1
+
+        if not customers_by_village:
+            return {}, report
+
+        hierarchy = self.odoo.get_village_hierarchy(list(customers_by_village.keys()))
+
+        village_levels: dict[int, list[dict]] = {}
+        for village_id, partner_ids in customers_by_village.items():
+            names = hierarchy.get(village_id)
+            if not names:
+                report["unresolved"].append({
+                    "odoo_village_id": village_id,
+                    "reason": "odoo_hierarchy_incomplete",
+                    "customer_ids": partner_ids,
+                })
+                continue
+
+            key = "|".join(
+                self._normalize_area_name(names[k])
+                for k in ("province", "city", "district", "village")
+            )
+            cached = _ADMIN_AREA_CACHE.get(key)
+            if cached:
+                village_levels[village_id] = cached
+                continue
+
+            try:
+                levels, reason, candidates = self._lookup_admin_area(names)
+            except AppError as e:
+                report["unresolved"].append({
+                    "odoo_path": key,
+                    "reason": "lookup_error",
+                    "error": e.to_dict()["error"].get("message", ""),
+                    "customer_ids": partner_ids,
+                })
+                continue
+
+            if levels:
+                _ADMIN_AREA_CACHE[key] = levels
+                village_levels[village_id] = levels
+            else:
+                report["unresolved"].append({
+                    "odoo_path": key,
+                    "reason": reason,
+                    # contoh jalur di eSuite yg namanya sama tapi induknya
+                    # beda -- bantu diagnosa beda ejaan (maks 5)
+                    "esuite_candidates": candidates[:5],
+                    "customer_ids": partner_ids,
+                })
+
+        partner_levels: dict[int, list[dict]] = {}
+        for village_id, levels in village_levels.items():
+            for pid in customers_by_village[village_id]:
+                partner_levels[pid] = levels
+        report["resolved_customers"] = len(partner_levels)
+        return partner_levels, report
+
+    def _lookup_admin_area(self, names: dict) -> tuple[list[dict] | None, str, list[str]]:
+        """
+        Cari 1 desa di eSuite: GET /administrative-areas?level=3&keyword=<desa>
+        (keyword = nama PERSIS, param dari dev eSuite 29 September 2026).
+        eSuite TIDAK punya filter induk -> semua desa bernama sama se-Indonesia
+        ikut balik, dipilih yang area[] (province/city/district/sub_district)
+        cocok dgn jalur nama Odoo setelah _normalize_area_name()
+        (mis. "Kab. Badung" == "KAB BADUNG").
+
+        Return: (administrative_level | None, reason, kandidat_tidak_cocok)
+        reason: "matched" | "ambiguous" | "not_found_in_esuite"
+        """
+        target = [
+            self._normalize_area_name(names[k])
+            for k in ("province", "city", "district", "village")
+        ]
+        matches: list[list[dict]] = []
+        candidates: list[str] = []
+
+        page = 1
+        while page <= ADMIN_AREA_MAX_PAGES:
+            result = self.esuite.pull_with_params(
+                "administrative-areas",
+                {
+                    "level": 3,
+                    "keyword": (names["village"] or "").strip().upper(),
+                    "page": page,
+                    "limit": ADMIN_AREA_LOOKUP_LIMIT,
+                },
+            )
+            for record in result.get("data") or []:
+                area = sorted(record.get("area") or [], key=lambda a: int(a.get("level") or 0))
+                path = [self._normalize_area_name(a.get("name")) for a in area]
+                if path == target:
+                    matches.append(area)
+                else:
+                    candidates.append(" > ".join(a.get("name") or "" for a in area))
+
+            total_page = (result.get("meta") or {}).get("total_page") or 1
+            if page >= total_page:
+                break
+            page += 1
+
+        if len(matches) == 1:
+            return self._to_administrative_level(matches[0]), "matched", []
+        if len(matches) > 1:
+            return None, "ambiguous", [
+                " > ".join(f"{a.get('name')} ({a.get('code')})" for a in m) for m in matches
+            ]
+        return None, "not_found_in_esuite", candidates
+
+    @staticmethod
+    def _to_administrative_level(area: list[dict]) -> list[dict]:
+        """
+        area[] hasil lookup -> administrative_level[] payload, urut level 0->3
+        (aturan dev eSuite 22 September 2026). Field PERSIS dari lookup:
+        id/name/code/type/level, + postal_code kalau ada (level 3).
+        """
+        levels = []
+        for a in area:
+            item = {k: a.get(k) for k in ("id", "name", "code", "type", "level")}
+            if a.get("postal_code"):
+                item["postal_code"] = a["postal_code"]
+            levels.append(item)
+        return levels
+
+    @staticmethod
+    def _normalize_area_name(value: str | bool | None) -> str:
+        """
+        Normalisasi nama wilayah utk dibandingkan Odoo vs eSuite: uppercase,
+        semua selain huruf/angka jadi spasi, spasi dirapikan.
+        Contoh: "Kab. Badung" -> "KAB BADUNG".
+        """
+        text = re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper())
+        return " ".join(text.split())
