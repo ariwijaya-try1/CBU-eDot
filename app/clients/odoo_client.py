@@ -1087,6 +1087,66 @@ class OdooClient:
 
         return orders
 
+    def get_purchased_product_ids_by_customer(
+        self, customer_ids: list[int], invoice_statuses: list[str]
+    ) -> dict[int, dict]:
+        """
+        5 Oktober 2026 -- produk yang PERNAH DIBELI tiap customer (riwayat
+        sale.order), dipakai outlet_stock_sync_service.py (POST
+        /sync/outlet-stock) sebagai sumber list produk stok outlet.
+
+        2 query search_read (bukan 1 query per customer): sale.order milik
+        customer_ids dgn invoice_status in invoice_statuses, lalu
+        sale.order.line order-order itu. Field & domain yang dipakai SAMA
+        dgn yang sudah jalan live di get_order_history_by_customer() /
+        get_order_line_quantities() (partner_id langsung -- bukan
+        commercial_partner_id, display_type=False utk buang baris
+        section/note).
+
+        Caller yang membatasi jumlah customer_ids per panggilan (chunk) --
+        method ini cuma memecah order_ids supaya 1 RPC tidak terlalu besar.
+
+        Return: {customer_id: {"name": str, "product_ids": [int, ...]}} --
+        customer tanpa order eligible TIDAK ada di dict hasil.
+        """
+        if not customer_ids:
+            return {}
+
+        orders = self._execute(
+            "sale.order",
+            "search_read",
+            [[("partner_id", "in", customer_ids), ("invoice_status", "in", invoice_statuses)]],
+            {"fields": ["id", "partner_id"]},
+        )
+        if not orders:
+            return {}
+
+        # partner_id datang sbg [id, display_name] (many2one Odoo standar)
+        partner_by_order = {o["id"]: o["partner_id"] for o in orders if o.get("partner_id")}
+        order_ids = list(partner_by_order.keys())
+
+        result: dict[int, dict] = {}
+        chunk_size = 1000
+        for i in range(0, len(order_ids), chunk_size):
+            lines = self._execute(
+                "sale.order.line",
+                "search_read",
+                [[("order_id", "in", order_ids[i : i + chunk_size]), ("display_type", "=", False)]],
+                {"fields": ["order_id", "product_id"]},
+            )
+            for line in lines:
+                if not line.get("order_id") or not line.get("product_id"):
+                    continue
+                partner = partner_by_order.get(line["order_id"][0])
+                if not partner:
+                    continue
+                entry = result.setdefault(partner[0], {"name": partner[1], "product_ids": set()})
+                entry["product_ids"].add(line["product_id"][0])
+
+        for entry in result.values():
+            entry["product_ids"] = sorted(entry["product_ids"])
+        return result
+
     def get_sales_orders(
         self,
         so_number: str | None = None,

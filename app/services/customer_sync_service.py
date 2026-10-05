@@ -116,6 +116,7 @@ class CustomerSyncService:
         names: str | None = None,
         include_payload: bool = False,
         only_with_coordinates: bool = False,
+        dry_run: bool = False,
     ):
         # names (31 Agustus 2026) -- ALTERNATIF dari external_codes: upsert
         # customer tertentu dicari BY NAMA (bukan id Odoo). Mutually exclusive
@@ -188,6 +189,34 @@ class CustomerSyncService:
             self._to_esuite_payload(c, group_map, branch_map, price_list_map, admin_area_map)
             for c in customers
         ]
+
+        # dry_run (5 Oktober 2026) -- OPSIONAL, default False (behavior lama
+        # tidak berubah). True: semua lookup/resolve di atas TETAP jalan
+        # (Odoo + GET eSuite, read-only), tapi TIDAK ADA push ke eSuite,
+        # tidak tulis CSV upsert, tidak tulis sync_log. Tujuan: lihat laporan
+        # "administrative_area" (desa mana yang tidak ketemu/ambigu) & bentuk
+        # payload SEBELUM upsert massal. Efek samping yang disengaja: hasil
+        # lookup wilayah yang match ikut masuk _ADMIN_AREA_CACHE, jadi sync
+        # sungguhan setelahnya lebih cepat.
+        if dry_run:
+            result = {
+                "dry_run": True,
+                "total_matched_in_odoo": total_matched,
+                "total_would_send": len(payload),
+                "synced_count": 0,
+                "administrative_area": admin_area_report,
+            }
+            if unresolved_groups:
+                result["customer_group_unresolved_industries"] = sorted(unresolved_groups)
+            if unresolved_branch_codes:
+                result["branch_unresolved_companies"] = sorted(unresolved_branch_codes)
+            if unresolved_price_lists:
+                result["customer_price_list_unresolved"] = sorted(unresolved_price_lists)
+            if name_search_report is not None:
+                result["name_search"] = name_search_report
+            if include_payload:
+                result["payload_preview"] = payload
+            return result
 
         # Batching -- REVISI 11 Agustus 2026: user konfirmasi bulk upsert di atas
         # ~2000 record kena 502. Push sekarang selalu lewat batch (bukan 1 request
@@ -968,6 +997,11 @@ class CustomerSyncService:
         report = {
             "resolved_customers": 0,
             "customers_without_village_in_odoo": 0,
+            # unique_villages/resolved_villages (5 Oktober 2026) -- ringkasan
+            # per DESA (bukan per customer), supaya kelihatan berapa lookup
+            # yang berhasil dari total desa unik di batch ini.
+            "unique_villages": 0,
+            "resolved_villages": 0,
             "unresolved": [],
         }
 
@@ -1033,6 +1067,8 @@ class CustomerSyncService:
             for pid in customers_by_village[village_id]:
                 partner_levels[pid] = levels
         report["resolved_customers"] = len(partner_levels)
+        report["unique_villages"] = len(customers_by_village)
+        report["resolved_villages"] = len(village_levels)
         return partner_levels, report
 
     def _lookup_admin_area(self, names: dict) -> tuple[list[dict] | None, str, list[str]]:

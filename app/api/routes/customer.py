@@ -76,6 +76,17 @@ def sync_customers(
             "nya tidak ada)."
         ),
     ),
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL (5 Oktober 2026) -- True: CEK SAJA, TIDAK ADA yang "
+            "dikirim ke eSuite. Semua lookup tetap jalan (Odoo + GET eSuite, "
+            "read-only) dan response berisi laporan 'administrative_area' "
+            "(desa customer yang ketemu/tidak ketemu di eSuite). Tambah "
+            "include_payload=true untuk lihat 'payload_preview'. False "
+            "(default): behavior lama, upsert seperti biasa."
+        ),
+    ),
 ):
     """
     Trigger manual sync Customer: Odoo (res.partner, customer_rank > 0) -> eSuite.
@@ -106,6 +117,15 @@ def sync_customers(
     kalau ada yang belum ke-resolve). Endpoint manual
     `/api/mapping/customer-grouping` TETAP ada untuk override/koreksi di luar
     industry_id.
+
+    `administrative_level` (29 September 2026) -- wilayah (provinsi/kota/
+    kecamatan/desa) di `addresses[]` di-AUTO-RESOLVE dari `village_id`
+    customer di Odoo (modul regional) ke wilayah eSuite. Desa yang tidak
+    ketemu/ambigu: customer TETAP di-upsert tanpa wilayah, dilaporkan di
+    response['administrative_area']['unresolved'].
+
+    `dry_run` (5 Oktober 2026) -- True = cek saja tanpa kirim apa pun ke
+    eSuite; pakai ini dulu untuk lihat laporan wilayah sebelum upsert massal.
     """
     return service.sync(
         event=event,
@@ -115,6 +135,7 @@ def sync_customers(
         names=names,
         include_payload=include_payload,
         only_with_coordinates=only_with_coordinates,
+        dry_run=dry_run,
     )
 
 
