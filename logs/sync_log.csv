@@ -156,3 +156,6 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-09-10T09:16:21.363342+00:00,order_history,import,1,5,0,,success,,"orders/import -- max 5 order terbaru/outlet (revisi scope 10 Sep 2026), invoice_status in ['to invoice', 'invoiced'], lookback 50, 0 customer di-skip lokal (tidak ada order match), 1 batch @ max 100 order/batch"
 2026-10-07T05:06:15.806622+00:00,customer,upsert,1508,1508,0,2,success,,
 2026-10-07T05:33:33.917150+00:00,customer,upsert,3455,20,0,1,success,,
+2026-10-07T06:33:52.559639+00:00,customer,upsert,1,1,0,1,success,,
+2026-10-07T06:34:17.620301+00:00,customer,upsert,1,1,0,1,success,,
+2026-10-07T07:18:15.483677+00:00,outlet_stock,upsert,1,1,0,1,success,,"store-stock -- 1 customer, 1 item (on_hand 0), 0 customer di-skip, 0 produk di-skip, 1 batch @ max 50 item"

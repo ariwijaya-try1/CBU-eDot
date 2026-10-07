@@ -1,5 +1,6 @@
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
+from app.core.admin_area import AdminAreaResolver
 from app.core.exceptions import ValidationError
 
 # Konstanta di bawah ini SENGAJA DIDUPLIKASI dari customer_sync_service.py
@@ -70,11 +71,21 @@ class CustomerUpsertGeoBranchSalesService:
     endpoint ini sendiri, panggilan ke-2+) -- tiap panggilan tetap kirim
     address baru dengan "id": "". Endpoint ini didesain untuk use-case
     customer yang BELUM punya address/geo data di eSuite.
+
+    🆕 7 Oktober 2026 -- KOREKSI dari live test: upsert Customer eSuite
+    ternyata MENGGANTI addresses[] (tetap 1 address per customer, tidak
+    numpuk) -- kekhawatiran "address numpuk" di atas TIDAK terjadi.
+    Konsekuensinya: address yang dikirim di sini menimpa address hasil
+    /sync/customers, jadi `administrative_level` (wilayah dari
+    res.partner.village_id) SEKARANG ikut dikirim di sini juga (keputusan
+    user 7 Oktober: disamakan dgn /sync/customers, lewat AdminAreaResolver)
+    supaya wilayah tidak terhapus saat endpoint ini dipakai.
     """
 
     def __init__(self):
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
+        self.admin_area = AdminAreaResolver(self.odoo, self.esuite)
 
     def upsert(
         self,
@@ -103,7 +114,17 @@ class CustomerUpsertGeoBranchSalesService:
             )
         customer = customers[0]
 
-        payload_item = self._to_esuite_payload(customer, latitude, longitude)
+        # administrative_level (7 Oktober 2026) -- HANYA di-resolve kalau
+        # address memang dikirim (coordinates diisi). Kalau desa customer
+        # kosong/tidak ketemu di eSuite, address tetap dikirim tanpa wilayah
+        # dan alasannya ada di result["administrative_area"].
+        admin_levels = None
+        admin_area_report = None
+        if latitude is not None:
+            admin_area_map, admin_area_report = self.admin_area.resolve_map([customer])
+            admin_levels = admin_area_map.get(customer["id"])
+
+        payload_item = self._to_esuite_payload(customer, latitude, longitude, admin_levels)
 
         # branch & salesman SEKARANG INDEPENDEN (🆕 7 September 2026, instruksi
         # eksplisit user -- SEBELUMNYA wajib diisi bersamaan, lihat git blame/
@@ -153,7 +174,7 @@ class CustomerUpsertGeoBranchSalesService:
 
         esuite_result = self.esuite.push("customers", event="upsert", data=[payload_item])
 
-        return {
+        result = {
             "customer_id": customer_id,
             "external_code": payload_item["external_code"],
             "latitude": latitude,
@@ -163,6 +184,10 @@ class CustomerUpsertGeoBranchSalesService:
             "payload_sent": [payload_item],
             "esuite_response": esuite_result,
         }
+        # HANYA ada kalau address dikirim (additive, response lama tidak berubah)
+        if admin_area_report is not None:
+            result["administrative_area"] = admin_area_report
+        return result
 
     # ------------------------------------------------------------------
     # Geo parsing -- IDENTIK dengan CustomerGeolocationService._parse_coordinates()
@@ -230,7 +255,11 @@ class CustomerUpsertGeoBranchSalesService:
         return re.sub(r"\D", "", value or "")
 
     def _to_esuite_payload(
-        self, customer: dict, latitude: float | None, longitude: float | None
+        self,
+        customer: dict,
+        latitude: float | None,
+        longitude: float | None,
+        admin_levels: list[dict] | None = None,
     ) -> dict:
         payload = {
             "name": customer["name"],
@@ -272,6 +301,10 @@ class CustomerUpsertGeoBranchSalesService:
                     "latitude": latitude,
                 }
             ]
+            # wilayah -- sama dgn CustomerSyncService._to_esuite_address()
+            # (7 Oktober 2026); key tidak disisipkan kalau tidak ke-resolve.
+            if admin_levels:
+                payload["addresses"][0]["administrative_level"] = admin_levels
 
         return payload
 

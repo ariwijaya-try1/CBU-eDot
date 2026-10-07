@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
+from app.core.admin_area import AdminAreaResolver
 from app.core.exceptions import AppError, ValidationError
 from app.core.sync_logger import log_sync_result, write_customer_upsert_csv
 
@@ -79,17 +80,10 @@ CUSTOMER_GROUP_EXTERNAL_CODE_PREFIX = "ODOO-CONTACT-INDUSTRY-"
 # berubah, prefix ini WAJIB ikut diubah juga.
 BRANCH_EXTERNAL_CODE_PREFIX = "ODOO-COMPANY-"
 
-# Wilayah administratif (29 September 2026) -- keputusan user: lookup LIVE ke
-# eSuite GET /administrative-areas + cache, BUKAN file mapping/tabel baru
-# (lihat _resolve_admin_area_map()). Cache level MODUL (hidup selama proses
-# FastAPI jalan, hilang saat restart/redeploy) -- key = jalur nama Odoo yang
-# sudah dinormalisasi "PROVINSI|KOTA|KECAMATAN|DESA", value =
-# administrative_level[] siap kirim. HANYA hasil yang MATCH yang di-cache;
-# not_found/ambiguous dicoba ulang tiap sync (supaya perbaikan data di Odoo/
-# eSuite langsung kepakai tanpa restart).
-_ADMIN_AREA_CACHE: dict[str, list[dict]] = {}
-ADMIN_AREA_LOOKUP_LIMIT = 100  # per page ke eSuite (default eSuite cuma 10)
-ADMIN_AREA_MAX_PAGES = 20  # pengaman loop paging (nama desa umum bisa ratusan hasil)
+# Wilayah administratif (29 September 2026) -- addresses[].administrative_level
+# di-resolve dari res.partner.village_id. Logic + cache DIPINDAH 7 Oktober 2026
+# ke app/core/admin_area.py (AdminAreaResolver) supaya dipakai bersama oleh
+# semua service yang mengirim addresses[] Customer -- lihat docstring di sana.
 
 # Prefix external_code Pricelist -- HARUS SAMA PERSIS dengan
 # EXTERNAL_CODE_PREFIX di pricelist_sync_service.py (didefinisikan ulang di
@@ -106,6 +100,7 @@ class CustomerSyncService:
     def __init__(self):
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
+        self.admin_area = AdminAreaResolver(self.odoo, self.esuite)
 
     def sync(
         self,
@@ -196,7 +191,7 @@ class CustomerSyncService:
         # tidak tulis CSV upsert, tidak tulis sync_log. Tujuan: lihat laporan
         # "administrative_area" (desa mana yang tidak ketemu/ambigu) & bentuk
         # payload SEBELUM upsert massal. Efek samping yang disengaja: hasil
-        # lookup wilayah yang match ikut masuk _ADMIN_AREA_CACHE, jadi sync
+        # lookup wilayah yang match ikut masuk cache AdminAreaResolver, jadi sync
         # sungguhan setelahnya lebih cepat.
         if dry_run:
             result = {
@@ -980,185 +975,10 @@ class CustomerSyncService:
     ) -> tuple[dict[int, list[dict]], dict]:
         """
         res.partner.village_id (Odoo, modul regional) -> administrative_level[]
-        eSuite, keputusan user 29 September 2026 (lookup LIVE + cache).
-
-        Alur:
-        1. Kumpulkan desa UNIK dari customer batch ini (bukan per customer).
-        2. Telusuri nama provinsi/kota/kecamatan/desa di Odoo
-           (OdooClient.get_village_hierarchy(), 4 query bulk).
-        3. Per desa: cek _ADMIN_AREA_CACHE; kalau belum ada, cari ke eSuite
-           (_lookup_admin_area()) -- match kalau 4 nama cocok setelah
-           dinormalisasi.
-        4. Desa yang tidak ketemu/ambigu/error -> dilaporkan, customer-nya
-           TETAP ke-upsert tanpa administrative_level (keputusan user).
+        eSuite. Sejak 7 Oktober 2026 cuma meneruskan ke AdminAreaResolver
+        (app/core/admin_area.py) -- detail alur, aturan pencocokan nama, dan
+        cache ada di sana.
 
         Return: ({partner_id: administrative_level[]}, report)
         """
-        report = {
-            "resolved_customers": 0,
-            "customers_without_village_in_odoo": 0,
-            # unique_villages/resolved_villages (5 Oktober 2026) -- ringkasan
-            # per DESA (bukan per customer), supaya kelihatan berapa lookup
-            # yang berhasil dari total desa unik di batch ini.
-            "unique_villages": 0,
-            "resolved_villages": 0,
-            "unresolved": [],
-        }
-
-        customers_by_village: dict[int, list[int]] = {}
-        for c in customers:
-            village = c.get("village_id")  # many2one: [id, display_name] / False
-            if village:
-                customers_by_village.setdefault(village[0], []).append(c["id"])
-            else:
-                report["customers_without_village_in_odoo"] += 1
-
-        if not customers_by_village:
-            return {}, report
-
-        hierarchy = self.odoo.get_village_hierarchy(list(customers_by_village.keys()))
-
-        village_levels: dict[int, list[dict]] = {}
-        for village_id, partner_ids in customers_by_village.items():
-            names = hierarchy.get(village_id)
-            if not names:
-                report["unresolved"].append({
-                    "odoo_village_id": village_id,
-                    "reason": "odoo_hierarchy_incomplete",
-                    "customer_ids": partner_ids,
-                })
-                continue
-
-            key = "|".join(
-                self._normalize_area_name(names[k])
-                for k in ("province", "city", "district", "village")
-            )
-            cached = _ADMIN_AREA_CACHE.get(key)
-            if cached:
-                village_levels[village_id] = cached
-                continue
-
-            try:
-                levels, reason, candidates = self._lookup_admin_area(names)
-            except AppError as e:
-                report["unresolved"].append({
-                    "odoo_path": key,
-                    "reason": "lookup_error",
-                    "error": e.to_dict()["error"].get("message", ""),
-                    "customer_ids": partner_ids,
-                })
-                continue
-
-            if levels:
-                _ADMIN_AREA_CACHE[key] = levels
-                village_levels[village_id] = levels
-            else:
-                report["unresolved"].append({
-                    "odoo_path": key,
-                    "reason": reason,
-                    # contoh jalur di eSuite yg namanya sama tapi induknya
-                    # beda -- bantu diagnosa beda ejaan (maks 5)
-                    "esuite_candidates": candidates[:5],
-                    "customer_ids": partner_ids,
-                })
-
-        partner_levels: dict[int, list[dict]] = {}
-        for village_id, levels in village_levels.items():
-            for pid in customers_by_village[village_id]:
-                partner_levels[pid] = levels
-        report["resolved_customers"] = len(partner_levels)
-        report["unique_villages"] = len(customers_by_village)
-        report["resolved_villages"] = len(village_levels)
-        return partner_levels, report
-
-    def _lookup_admin_area(self, names: dict) -> tuple[list[dict] | None, str, list[str]]:
-        """
-        Cari 1 desa di eSuite: GET /administrative-areas?level=3&keyword=<desa>
-        (keyword = nama PERSIS, param dari dev eSuite 29 September 2026).
-        eSuite TIDAK punya filter induk -> semua desa bernama sama se-Indonesia
-        ikut balik, dipilih yang area[] (province/city/district/sub_district)
-        cocok dgn jalur nama Odoo setelah _normalize_area_name()
-        (mis. "Kab. Badung" == "KAB BADUNG").
-
-        Return: (administrative_level | None, reason, kandidat_tidak_cocok)
-        reason: "matched" | "ambiguous" | "not_found_in_esuite"
-        """
-        target = [
-            self._normalize_area_name(names[k])
-            for k in ("province", "city", "district", "village")
-        ]
-        matches: list[list[dict]] = []
-        # (skor, teks) -- skor = jumlah level yang namanya SAMA dgn Odoo,
-        # dihitung dari desa ke atas (desa, kecamatan, kota, provinsi).
-        # 7 Oktober 2026: `keyword` eSuite ternyata cocok SEBAGIAN (bukan
-        # persis -- "MENTENG" ikut balikin "MENTENG KARYA", "BOJONG
-        # MENTENG"), jadi kandidat diurutkan dari yang paling mirip supaya
-        # 5 kandidat di laporan berisi ejaan eSuite yang relevan.
-        scored: list[tuple[int, str]] = []
-
-        page = 1
-        while page <= ADMIN_AREA_MAX_PAGES:
-            result = self.esuite.pull_with_params(
-                "administrative-areas",
-                {
-                    "level": 3,
-                    "keyword": (names["village"] or "").strip().upper(),
-                    "page": page,
-                    "limit": ADMIN_AREA_LOOKUP_LIMIT,
-                },
-            )
-            for record in result.get("data") or []:
-                area = sorted(record.get("area") or [], key=lambda a: int(a.get("level") or 0))
-                path = [self._normalize_area_name(a.get("name")) for a in area]
-                if path == target:
-                    matches.append(area)
-                else:
-                    score = 0
-                    if len(path) == len(target):
-                        # zip dari belakang: desa dulu, lalu kecamatan, dst;
-                        # berhenti di level pertama yang beda.
-                        for mine, theirs in zip(reversed(target), reversed(path)):
-                            if mine != theirs:
-                                break
-                            score += 1
-                    scored.append((score, " > ".join(a.get("name") or "" for a in area)))
-
-            total_page = (result.get("meta") or {}).get("total_page") or 1
-            if page >= total_page:
-                break
-            page += 1
-
-        if len(matches) == 1:
-            return self._to_administrative_level(matches[0]), "matched", []
-        if len(matches) > 1:
-            return None, "ambiguous", [
-                " > ".join(f"{a.get('name')} ({a.get('code')})" for a in m) for m in matches
-            ]
-        # sort stabil: skor tertinggi dulu, urutan asli eSuite dipertahankan
-        scored.sort(key=lambda item: -item[0])
-        return None, "not_found_in_esuite", [text for _, text in scored]
-
-    @staticmethod
-    def _to_administrative_level(area: list[dict]) -> list[dict]:
-        """
-        area[] hasil lookup -> administrative_level[] payload, urut level 0->3
-        (aturan dev eSuite 22 September 2026). Field PERSIS dari lookup:
-        id/name/code/type/level, + postal_code kalau ada (level 3).
-        """
-        levels = []
-        for a in area:
-            item = {k: a.get(k) for k in ("id", "name", "code", "type", "level")}
-            if a.get("postal_code"):
-                item["postal_code"] = a["postal_code"]
-            levels.append(item)
-        return levels
-
-    @staticmethod
-    def _normalize_area_name(value: str | bool | None) -> str:
-        """
-        Normalisasi nama wilayah utk dibandingkan Odoo vs eSuite: uppercase,
-        semua selain huruf/angka jadi spasi, spasi dirapikan.
-        Contoh: "Kab. Badung" -> "KAB BADUNG".
-        """
-        text = re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper())
-        return " ".join(text.split())
+        return self.admin_area.resolve_map(customers)

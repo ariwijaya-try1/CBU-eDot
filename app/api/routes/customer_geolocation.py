@@ -33,7 +33,15 @@ def update_customer_geolocation(
     UI eSuite mewajibkan banyak field lain yang tidak relevan.
 
     Payload ke eSuite sengaja MINIMAL -- cuma external_code + addresses[]
-    berisi longitude/latitude (upsert eSuite partial-merge, field lain TIDAK
-    ikut ter-reset). Pola sama dengan POST /deactivate/customer.
+    (field atas customer lain TIDAK ikut ter-reset, upsert eSuite
+    partial-merge). Pola sama dengan POST /deactivate/customer.
+
+    🆕 7 Oktober 2026 -- eSuite MENGGANTI addresses[] utuh tiap upsert, jadi
+    untuk external_code `ODOO-PARTNER-{id}` address sekarang dikirim LENGKAP:
+    street + wilayah (provinsi/kota/kecamatan/desa) diambil dari Odoo,
+    koordinat dari input ini. Lihat `address_mode` di response:
+    - `full` -- address lengkap terkirim.
+    - `coordinates_only` -- external_code tidak ketemu di Odoo (data legacy);
+      hanya koordinat yang terkirim, baca field `warning`.
     """
     return service.update(external_code=external_code, coordinates=coordinates)
