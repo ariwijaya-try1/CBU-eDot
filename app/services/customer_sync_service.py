@@ -1088,7 +1088,13 @@ class CustomerSyncService:
             for k in ("province", "city", "district", "village")
         ]
         matches: list[list[dict]] = []
-        candidates: list[str] = []
+        # (skor, teks) -- skor = jumlah level yang namanya SAMA dgn Odoo,
+        # dihitung dari desa ke atas (desa, kecamatan, kota, provinsi).
+        # 7 Oktober 2026: `keyword` eSuite ternyata cocok SEBAGIAN (bukan
+        # persis -- "MENTENG" ikut balikin "MENTENG KARYA", "BOJONG
+        # MENTENG"), jadi kandidat diurutkan dari yang paling mirip supaya
+        # 5 kandidat di laporan berisi ejaan eSuite yang relevan.
+        scored: list[tuple[int, str]] = []
 
         page = 1
         while page <= ADMIN_AREA_MAX_PAGES:
@@ -1107,7 +1113,15 @@ class CustomerSyncService:
                 if path == target:
                     matches.append(area)
                 else:
-                    candidates.append(" > ".join(a.get("name") or "" for a in area))
+                    score = 0
+                    if len(path) == len(target):
+                        # zip dari belakang: desa dulu, lalu kecamatan, dst;
+                        # berhenti di level pertama yang beda.
+                        for mine, theirs in zip(reversed(target), reversed(path)):
+                            if mine != theirs:
+                                break
+                            score += 1
+                    scored.append((score, " > ".join(a.get("name") or "" for a in area)))
 
             total_page = (result.get("meta") or {}).get("total_page") or 1
             if page >= total_page:
@@ -1120,7 +1134,9 @@ class CustomerSyncService:
             return None, "ambiguous", [
                 " > ".join(f"{a.get('name')} ({a.get('code')})" for a in m) for m in matches
             ]
-        return None, "not_found_in_esuite", candidates
+        # sort stabil: skor tertinggi dulu, urutan asli eSuite dipertahankan
+        scored.sort(key=lambda item: -item[0])
+        return None, "not_found_in_esuite", [text for _, text in scored]
 
     @staticmethod
     def _to_administrative_level(area: list[dict]) -> list[dict]:
