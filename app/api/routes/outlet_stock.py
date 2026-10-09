@@ -34,9 +34,9 @@ def sync_outlet_stock(
         description=(
             "DEFAULT TRUE (beda dari endpoint sync lain) -- cuma hitung & "
             "tampilkan apa yang AKAN dikirim, TIDAK push ke eSuite. Isi "
-            "false untuk push beneran. ⚠️ Push menulis stok 1 lalu "
-            "mengembalikannya ke nilai semula -- baca peringatan di "
-            "deskripsi endpoint."
+            "false untuk push beneran. ⚠️ Push menulis stok 0; isian "
+            "sales yang ikut jadi 0 langsung dikembalikan -- baca "
+            "peringatan di deskripsi endpoint."
         ),
     ),
     batch_size: int | None = Query(
@@ -56,29 +56,31 @@ def sync_outlet_stock(
     ),
 ):
     """
-    ## ⚠️ PERHATIAN -- MENULIS KE STOK OUTLET (2 LANGKAH)
+    ## ⚠️ PERHATIAN -- MENULIS KE STOK OUTLET
 
-    eSuite menganggap produk yang belum punya baris stok = stok 0, jadi
-    mengirim `on_hand: 0` tidak membuat apa-apa ("unchanged"). Karena itu
-    tiap batch dikirim **dua kali**:
+    Hasil akhirnya: **produk yang belum ada di toko ditambahkan dengan stok
+    0; produk yang sudah ada tidak berubah.**
 
-    1. `on_hand: 1` untuk tiap produk -- eSuite membuat barisnya dan
-       melaporkan nilai semula (`on_hand_before`);
-    2. langsung dikirim lagi dengan **nilai semula** itu.
+    Endpoint eSuite `store-stock` selalu menimpa, dan bridge tidak bisa
+    melihat stok toko sebelum mengirim. Karena itu tiap batch:
 
-    Hasil akhirnya:
+    1. dikirim `on_hand: 0` untuk tiap produk -- eSuite membuat baris yang
+       belum ada dan melaporkan nilai semula (`on_hand_before`);
+    2. **hanya** untuk produk yang nilai semulanya > 0 (stok tanpa tanggal
+       kedaluwarsa yang sudah diisi sales), langsung dikirim lagi **nilai
+       semula** itu.
 
-    - produk yang belum ada di toko -> muncul dengan **stok 0**;
-    - stok **tanpa tanggal kedaluwarsa** yang sudah diisi sales -> **kembali
-      ke nilai semula** (tidak hilang);
-    - stok **dengan tanggal kedaluwarsa** -> tidak tersentuh.
+    Stok **dengan tanggal kedaluwarsa** tidak tersentuh sama sekali (baris
+    terpisah di eSuite). Akibatnya produk yang sudah diisi expired tampil
+    sebagai 1 baris stok 0 tanpa expired + baris per tanggal expired.
 
     Yang perlu disadari sebelum `dry_run=false`:
 
-    - selama beberapa detik di antara 2 langkah, stok tampil **1**;
+    - isian sales tanpa expired sempat tampil **0** selama beberapa detik
+      (di antara langkah 1 dan 2);
     - kalau langkah 2 gagal (sudah dicoba ulang 3x), proses **berhenti** dan
-      item itu **tertinggal di angka 1** -- lihat `restore_failed_items`
-      (isinya nilai yang seharusnya dikembalikan) dan `abort_reason`;
+      isian itu **tertinggal di 0** -- lihat `restore_failed_items` (isinya
+      nilai yang seharusnya dikembalikan) dan `abort_reason`;
     - kalau proses berhenti di tengah, sisanya ada di
       `unprocessed_item_count` -- lanjutkan dengan `limit` + `offset`.
 
@@ -97,21 +99,24 @@ def sync_outlet_stock(
     - **Guard customer:** harus sudah ada di eSuite DAN punya sales branch
       (syarat endpoint). Yang tidak lolos masuk `skipped_customers`.
     - **Guard produk:** harus sudah ada di eSuite dgn variant valid. Yang
-      tidak lolos masuk `skipped_products`.
+      tidak lolos masuk `skipped_products`, dgn `reason` spesifik dari
+      Odoo (archived / bukan Saleable / list_price 0 = wajar, abaikan).
+      Cuma yang `action_needed: true` yang perlu `POST /sync/product`.
     - **Batching:** maks 50 item per request, dikirim berurutan dgn jeda.
       Warehouse outlet dibuat otomatis oleh eSuite.
 
     Cara baca hasil push:
 
-    - `pushed_count` -- item yang selesai 2 langkah;
+    - `pushed_count` -- item yang selesai;
     - `existing_stock_count` -- item yang ternyata sudah berisi stok (nilainya
-      dikembalikan);
-    - `esuite_summary.seed` / `.restore` -- ringkasan eSuite per langkah
-      (received / upserted / unchanged / failed / not_processed);
+      dikembalikan di langkah 2);
+    - `esuite_summary.seed` -- ringkasan eSuite langkah 1 (`upserted` =
+      baris baru dibuat / isian sales ikut jadi 0, `unchanged` = sudah ada
+      dgn stok 0); `.restore` -- ringkasan langkah 2;
     - `failed_items` -- item yang ditolak eSuite di langkah 1.
 
-    Mode semua customer bisa makan waktu lama (2 request + 1 detik jeda per
-    50 item) -- jalankan bertahap pakai `limit` + `offset`.
+    Mode semua customer bisa makan waktu lama (1-2 request + 1 detik jeda
+    per 50 item) -- jalankan bertahap pakai `limit` + `offset`.
     """
     return service.sync(
         external_codes=external_codes,

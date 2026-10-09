@@ -16,24 +16,30 @@ PRODUCT_EXTERNAL_CODE_PREFIX = "ODOO-PROD-"
 ELIGIBLE_INVOICE_STATUSES = ["to invoice", "invoiced"]
 
 # Odoo TIDAK tahu stok fisik di outlet -- bridge cuma menyiapkan LIST
-# produknya (baris stok 0, tanpa expired_date).
+# produknya: tiap baris dikirim on_hand 0, tanpa expired_date.
 #
-# 7 Oktober 2026 -- test live + jawaban dev eDot: di eSuite, produk yang
-# belum punya baris stok dianggap stok awal 0, jadi kirim on_hand 0 dibalas
-# "unchanged" dan produknya tidak disiapkan. Keputusan user: workaround 2
-# LANGKAH per batch (lihat sync()):
-#   1. kirim SEED_ON_HAND (1) -> eSuite membuat baris + melaporkan
-#      on_hand_before (nilai semula) per item;
-#   2. langsung kirim on_hand_before itu lagi -> produk baru jadi 0, stok
-#      yang sudah diisi sales kembali ke nilai semula.
-SEED_ON_HAND = 1
+# Riwayat 7 Oktober 2026:
+# - pagi: eSuite membalas "unchanged" utk on_hand 0 pada produk yang belum
+#   punya baris stok (dianggap stok awal 0) -> produk tidak disiapkan;
+# - sore: workaround bridge "kirim 1 lalu kembalikan";
+# - malam: dev eDot menambah capability -- on_hand 0 sekarang MEMBUAT baris.
+#   Keputusan user: kembali kirim 0, dan kembalikan HANYA kalau perlu.
+#
+# Endpoint store-stock selalu menimpa, dan bridge tidak bisa melihat stok
+# outlet sebelum mengirim. Jadi tiap batch:
+#   1. kirim PLACEHOLDER_ON_HAND (0) -> produk baru jadi baris stok 0;
+#      eSuite melaporkan on_hand_before (nilai semula) per item;
+#   2. HANYA utk item yang on_hand_before-nya > 0 (stok tanpa expired yang
+#      sudah diisi sales, baru saja ikut jadi 0): kirim lagi nilai semulanya.
+# Hasil akhir: yang belum ada ditambah (stok 0), yang sudah ada tidak berubah.
+PLACEHOLDER_ON_HAND = 0
 
 # Status item dari eSuite (data.results[].status) yang berarti item itu
 # TIDAK diproses -- tidak ikut langkah 2.
 FAILED_ITEM_STATUSES = {"failed", "not_processed"}
 
 # Langkah 2 (mengembalikan nilai) dicoba ulang kalau call-nya gagal, supaya
-# stok tidak tertinggal di angka SEED_ON_HAND. Aman diulang: nilainya
+# isian sales tidak tertinggal di angka 0. Aman diulang: nilainya
 # set-to-target, bukan penambahan.
 RESTORE_MAX_ATTEMPTS = 3
 RESTORE_RETRY_DELAY_SECONDS = 3.0
@@ -54,15 +60,14 @@ ODOO_CUSTOMER_CHUNK_SIZE = 50
 
 # Ditampilkan di Swagger (docstring route) DAN di field "warning" response.
 OVERWRITE_WARNING = (
-    "PERHATIAN -- endpoint ini menulis ke stok outlet eSuite dalam 2 langkah "
-    "per batch: (1) kirim on_hand 1 untuk tiap produk, (2) langsung kirim "
-    "nilai semula yang dilaporkan eSuite (0 untuk produk yang belum punya "
-    "stok). Hasil akhir: produk yang belum ada muncul dengan stok 0; stok "
-    "TANPA tanggal kedaluwarsa yang sudah diisi sales kembali ke nilai "
-    "semula; stok DENGAN tanggal kedaluwarsa tidak tersentuh. Selama "
-    "beberapa detik di antara 2 langkah, stok tampil 1. Kalau langkah 2 "
-    "gagal, proses BERHENTI dan item itu tertinggal di angka 1 -- lihat "
-    "restore_failed_items."
+    "PERHATIAN -- endpoint ini menulis ke stok outlet eSuite. Tiap produk "
+    "dikirim on_hand 0 tanpa expired_date: produk yang belum ada di toko "
+    "muncul dengan stok 0. Kalau ternyata produk itu SUDAH berisi stok tanpa "
+    "tanggal kedaluwarsa (isian sales), stoknya sempat jadi 0 beberapa detik "
+    "lalu langsung dikembalikan ke nilai semula (langkah 2). Stok DENGAN "
+    "tanggal kedaluwarsa tidak tersentuh. Kalau langkah 2 gagal, proses "
+    "BERHENTI dan item itu tertinggal di stok 0 -- nilai yang harus "
+    "dikembalikan ada di restore_failed_items."
 )
 
 
@@ -79,8 +84,9 @@ class OutletStockSyncService:
       3. Odoo -- produk yang pernah dibeli tiap customer (riwayat sale.order).
       4. GUARD produk -- cek eSuite: produk harus sudah ada dgn variant valid
          (pola sama stock_sync_service.py).
-      5. Push per 50 item, BERURUTAN, 2 langkah per batch (kirim 1 lalu
-         kembalikan ke nilai semula -- lihat komentar SEED_ON_HAND).
+      5. Push per 50 item, BERURUTAN: kirim stok 0, lalu kembalikan nilai
+         semula HANYA utk item yang ternyata sudah berisi stok (lihat
+         komentar PLACEHOLDER_ON_HAND).
 
     Guard dipasang supaya item yang pasti ditolak eSuite tidak ikut dikirim.
 
@@ -189,9 +195,9 @@ class OutletStockSyncService:
                     "customer": {"external_code": code},
                     "product_variant": {"external_code": product_code},
                     "uom_level_code": UOM_LEVEL_CODE,
-                    # Nilai langkah 1. Langkah 2 mengganti on_hand dgn nilai
+                    # Langkah 2 (kalau perlu) mengganti on_hand dgn nilai
                     # semula dari jawaban eSuite.
-                    "on_hand": SEED_ON_HAND,
+                    "on_hand": PLACEHOLDER_ON_HAND,
                     # expired_date SENGAJA tidak dikirim (opsional, dev: kosongkan
                     # kalau tidak ada tanggal kedaluwarsa).
                 })
@@ -221,21 +227,14 @@ class OutletStockSyncService:
             "batch_count": (len(items) + resolved_batch_size - 1) // resolved_batch_size,
             "customers": customers_report,
             "skipped_customers": skipped_customers,
-            "skipped_products": [
-                {
-                    "product_external_code": product_code,
-                    "customer_count": count,
-                    "reason": "produk/variant belum ada di eSuite -- jalankan POST /sync/product dulu",
-                }
-                for product_code, count in sorted(unverified_products.items())
-            ],
-            # Body LANGKAH 1 (on_hand 1) -- cuma diisi kalau diminta (mode
+            "skipped_products": self._build_skipped_products(unverified_products),
+            # Body LANGKAH 1 (on_hand 0) -- cuma diisi kalau diminta (mode
             # semua customer bisa puluhan ribu baris). Body langkah 2 baru
             # diketahui saat jalan (nilainya dari jawaban eSuite).
             "payload": {"event": "upsert", "data": items} if include_payload else None,
-            # pushed_count = item yang selesai 2 langkah (baris ada, nilai
-            # sudah dikembalikan). failed_count = item yang ditolak eSuite /
-            # call-nya gagal.
+            # pushed_count = item yang selesai (baris ada; kalau tadinya
+            # berisi stok, nilainya sudah dikembalikan). failed_count = item
+            # yang ditolak eSuite / call-nya gagal.
             "pushed_count": 0,
             "failed_count": 0,
             # Item yang sebelum dijalankan SUDAH berisi stok (> 0) -- nilainya
@@ -247,7 +246,7 @@ class OutletStockSyncService:
             # Gabungan data.summary eSuite dari semua batch, per langkah.
             "esuite_summary": {"seed": {}, "restore": {}},
             "failed_items": [],
-            # KRITIS kalau tidak kosong: item ini tertinggal di on_hand 1.
+            # KRITIS kalau tidak kosong: isian sales di item ini tertinggal di 0.
             # Isinya sudah berbentuk payload -- "on_hand" = nilai yang
             # seharusnya dikembalikan.
             "restore_failed_items": [],
@@ -260,10 +259,10 @@ class OutletStockSyncService:
         if dry_run or not items:
             return result
 
-        # 5. Push BERURUTAN. Tiap batch 2 langkah (lihat komentar
-        # SEED_ON_HAND). BERHENTI di call pertama yang gagal -- beda dari
-        # sync lain yang lanjut ke batch berikutnya, karena di sini call
-        # yang gagal bisa meninggalkan stok di angka 1.
+        # 5. Push BERURUTAN (lihat komentar PLACEHOLDER_ON_HAND). BERHENTI
+        # di call pertama yang gagal -- beda dari sync lain yang lanjut ke
+        # batch berikutnya, karena di sini call yang gagal bisa meninggalkan
+        # isian sales di angka 0.
         batches = [
             items[i : i + resolved_batch_size]
             for i in range(0, len(items), resolved_batch_size)
@@ -275,19 +274,19 @@ class OutletStockSyncService:
             result["batches"].append(report)
             processed_items += len(batch)
 
-            # Langkah 1 -- kirim SEED_ON_HAND
+            # Langkah 1 -- kirim stok 0
             try:
                 seed_response = self.esuite.push("store-stock", "upsert", batch)
             except AppError as e:
                 # Kalau penyebabnya timeout, eSuite BISA saja sudah memproses
-                # batch ini (stok jadi 1) tanpa kita tahu nilai semulanya.
+                # batch ini (isian sales jadi 0) tanpa kita tahu nilai semulanya.
                 report.update(status="seed_failed", error=e.to_dict()["error"])
                 result["failed_count"] += len(batch)
                 result["aborted"] = True
                 result["abort_reason"] = (
                     f"langkah 1 batch {idx} gagal di level call -- cek stok "
-                    "customer di batch ini (bisa tertinggal di angka 1 kalau "
-                    "penyebabnya timeout)"
+                    "customer di batch ini (isian sales tanpa expired bisa "
+                    "tertinggal di 0 kalau penyebabnya timeout)"
                 )
                 report["customer_external_codes"] = sorted(
                     {it["customer"]["external_code"] for it in batch}
@@ -318,14 +317,14 @@ class OutletStockSyncService:
                 if before > 0:
                     result["existing_stock_count"] += 1
 
-                if before == SEED_ON_HAND:
-                    # Nilai semula memang 1 -> sudah benar, tidak perlu langkah 2.
+                if before == PLACEHOLDER_ON_HAND:
+                    # Produk baru / memang sudah 0 -> selesai, tidak perlu langkah 2.
                     result["pushed_count"] += 1
                     continue
                 # {**item, ...} = salin dict item lalu timpa key on_hand.
                 restore_items.append({**item, "on_hand": before})
 
-            # Langkah 2 -- kembalikan ke nilai semula
+            # Langkah 2 -- kembalikan nilai semula (hanya item yang tadinya berisi stok)
             restore_summary = {}
             if restore_items:
                 restore_response, restore_error = self._push_restore(restore_items)
@@ -336,7 +335,7 @@ class OutletStockSyncService:
                     result["aborted"] = True
                     result["abort_reason"] = (
                         f"langkah 2 batch {idx} gagal setelah {RESTORE_MAX_ATTEMPTS}x coba -- "
-                        "item di restore_failed_items tertinggal di on_hand 1"
+                        "isian sales di restore_failed_items tertinggal di stok 0"
                     )
                     break
 
@@ -361,7 +360,7 @@ class OutletStockSyncService:
                 result["aborted"] = True
                 result["abort_reason"] = (
                     f"eSuite menolak sebagian item di langkah 2 batch {idx} -- "
-                    "item di restore_failed_items tertinggal di on_hand 1"
+                    "isian sales di restore_failed_items tertinggal di stok 0"
                 )
                 break
 
@@ -380,7 +379,7 @@ class OutletStockSyncService:
                 "batch_count": len(batches),
             },
             note=(
-                f"store-stock 2 langkah (kirim {SEED_ON_HAND} lalu nilai semula) -- "
+                f"store-stock (kirim {PLACEHOLDER_ON_HAND}, kembalikan yang sudah berisi) -- "
                 f"{len(customers_report)} customer, {len(items)} item, "
                 f"{result['existing_stock_count']} sudah berisi stok, "
                 f"{len(result['restore_failed_items'])} gagal dikembalikan, "
@@ -445,6 +444,63 @@ class OutletStockSyncService:
             return {}
         codes = {f"{CUSTOMER_EXTERNAL_CODE_PREFIX}{cid}" for cid in customer_ids}
         return self.esuite.find_by_external_codes("customers", codes)
+
+    def _build_skipped_products(self, unverified_products: dict[str, int]) -> list[dict]:
+        """
+        9 Oktober 2026 (opsi 3, keputusan user) -- alasan skip DIPERJELAS:
+        cek status produk di Odoo (termasuk archived) supaya produk yang
+        MEMANG tidak disync (archived / bukan Saleable / harga 0 -- aturan
+        sama dgn odoo_client.get_products()) dibedakan dari produk yang
+        seharusnya ada di eSuite tapi belum tersync.
+
+        action_needed=True HANYA utk yang perlu ditindak (jalankan
+        POST /sync/product). Lookup Odoo gagal -> fallback ke alasan lama,
+        sync tidak ikut gagal (ini cuma laporan).
+        """
+        if not unverified_products:
+            return []
+
+        ids = []
+        for code in unverified_products:
+            raw = code[len(PRODUCT_EXTERNAL_CODE_PREFIX):]
+            if raw.isdigit():
+                ids.append(int(raw))
+        try:
+            status_by_id = self.odoo.get_products_sync_status(ids)
+            lookup_ok = True
+        except AppError:
+            status_by_id, lookup_ok = {}, False
+
+        report = []
+        for code, count in sorted(unverified_products.items()):
+            raw = code[len(PRODUCT_EXTERNAL_CODE_PREFIX):]
+            status = status_by_id.get(int(raw)) if raw.isdigit() else None
+
+            reasons = []
+            if lookup_ok and status is None:
+                reasons.append("produk tidak ditemukan di Odoo (kemungkinan sudah dihapus)")
+            elif status:
+                if not status["active"]:
+                    reasons.append("produk di-archive di Odoo")
+                if "all / saleable" not in status["categ_name"].lower():
+                    reasons.append(f"kategori bukan ALL / SALEABLE ({status['categ_name'] or '-'})")
+                if status["list_price"] <= 0:
+                    reasons.append("list_price 0 di Odoo")
+
+            if reasons:
+                reason = "; ".join(reasons) + " -- memang tidak disync ke eSuite, abaikan"
+                action_needed = False
+            else:
+                reason = "produk/variant belum ada di eSuite -- jalankan POST /sync/product dulu"
+                action_needed = True
+
+            report.append({
+                "product_external_code": code,
+                "customer_count": count,
+                "reason": reason,
+                "action_needed": action_needed,
+            })
+        return report
 
     def _find_verified_product_codes(self, wanted_codes: set[str]) -> set[str]:
         """

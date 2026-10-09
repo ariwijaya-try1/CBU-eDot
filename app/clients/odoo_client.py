@@ -1147,6 +1147,44 @@ class OdooClient:
             entry["product_ids"] = sorted(entry["product_ids"])
         return result
 
+    def get_products_sync_status(self, ids: list[int]) -> dict[int, dict]:
+        """
+        9 Oktober 2026 -- status product.product TERMASUK yang di-archive,
+        dipakai outlet_stock_sync_service.py utk menjelaskan KENAPA produk
+        yang pernah dibeli outlet tidak ada di eSuite (skipped_products).
+
+        context active_test=False: tanpa ini Odoo diam-diam membuang record
+        active=False dari hasil search_read (penyebab produk archived
+        "tidak ditemukan").
+
+        Return: {product_id: {"active", "categ_name", "list_price"}} --
+        id yang tidak ada di Odoo sama sekali (terhapus) TIDAK ada di dict.
+        """
+        if not ids:
+            return {}
+
+        result: dict[int, dict] = {}
+        chunk_size = 1000
+        for i in range(0, len(ids), chunk_size):
+            records = self._execute(
+                "product.product",
+                "search_read",
+                [[("id", "in", ids[i : i + chunk_size])]],
+                {
+                    "fields": ["id", "active", "categ_id", "list_price"],
+                    "context": {"active_test": False},
+                },
+            )
+            for r in records:
+                # categ_id datang sbg [id, complete_name] (many2one standar)
+                categ = r.get("categ_id")
+                result[r["id"]] = {
+                    "active": bool(r.get("active")),
+                    "categ_name": categ[1] if categ else "",
+                    "list_price": r.get("list_price") or 0,
+                }
+        return result
+
     def get_sales_orders(
         self,
         so_number: str | None = None,
