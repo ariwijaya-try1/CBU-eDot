@@ -211,6 +211,16 @@ class AdminAreaResolver:
         # dihitung dari desa ke atas; dipakai mengurutkan kandidat di laporan.
         scored: list[tuple[int, str]] = []
 
+        def score_of(path: list[str]) -> int:
+            score = 0
+            if len(path) == len(target):
+                for mine, theirs in zip(reversed(target), reversed(path)):
+                    if mine != theirs:
+                        break
+                    score += 1
+            return score
+
+        records: list[dict] = []
         page = 1
         while page <= ADMIN_AREA_MAX_PAGES:
             result = self.esuite.pull_with_params(
@@ -222,27 +232,51 @@ class AdminAreaResolver:
                     "limit": ADMIN_AREA_LOOKUP_LIMIT,
                 },
             )
-            for record in result.get("data") or []:
-                area = sorted(record.get("area") or [], key=lambda a: int(a.get("level") or 0))
-                path = [normalize_area_name(a.get("name")) for a in area]
-                if path == target:
-                    exact.append(area)
-                    continue
-                if len(path) == 4 and _relaxed_path(path) == target_relaxed:
-                    relaxed.append(area)
-                    continue
-                score = 0
-                if len(path) == len(target):
-                    for mine, theirs in zip(reversed(target), reversed(path)):
-                        if mine != theirs:
-                            break
-                        score += 1
-                scored.append((score, self._path_text(area)))
-
+            records.extend(result.get("data") or [])
             total_page = (result.get("meta") or {}).get("total_page") or 1
             if page >= total_page:
                 break
             page += 1
+
+        if not records:
+            # 9 Oktober 2026 -- KHUSUS DIAGNOSA: kalau nama desa sama sekali
+            # tidak ketemu (mis. Odoo "SEMARAPURA KLOD" vs kemungkinan eSuite
+            # "SEMARAPURA KELOD"), cari sekali lagi pakai kata PERTAMA nama
+            # desa via `search_name` (cocok sebagian), 1 halaman saja. Hasil
+            # ini HANYA mengisi esuite_candidates (ejaan eSuite terlihat di
+            # laporan) -- TIDAK pernah dipakai sebagai match, karena nama
+            # desanya memang beda.
+            first_word = (normalize_area_name(names["village"]).split() or [""])[0]
+            if first_word:
+                fallback = self.esuite.pull_with_params(
+                    "administrative-areas",
+                    {
+                        "level": 3,
+                        "search_name": first_word,
+                        "page": 1,
+                        "limit": ADMIN_AREA_LOOKUP_LIMIT,
+                    },
+                )
+                for record in fallback.get("data") or []:
+                    area = sorted(record.get("area") or [], key=lambda a: int(a.get("level") or 0))
+                    path = [normalize_area_name(a.get("name")) for a in area]
+                    # skor diagnosa: jumlah level ATAS (provinsi/kota/kecamatan)
+                    # yang sama, supaya desa di kecamatan yang sama naik ke atas
+                    upper = sum(1 for mine, theirs in zip(target[:3], path[:3]) if mine == theirs)
+                    scored.append((upper, self._path_text(area)))
+                scored.sort(key=lambda item: -item[0])
+                return None, "not_found_in_esuite", [text for _, text in scored], None
+
+        for record in records:
+            area = sorted(record.get("area") or [], key=lambda a: int(a.get("level") or 0))
+            path = [normalize_area_name(a.get("name")) for a in area]
+            if path == target:
+                exact.append(area)
+                continue
+            if len(path) == 4 and _relaxed_path(path) == target_relaxed:
+                relaxed.append(area)
+                continue
+            scored.append((score_of(path), self._path_text(area)))
 
         for matches, is_relaxed in ((exact, False), (relaxed, True)):
             if len(matches) == 1:
