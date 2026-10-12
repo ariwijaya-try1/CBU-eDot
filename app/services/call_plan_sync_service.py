@@ -45,6 +45,7 @@ from app.services.visit_schedule_service import (
 )
 
 ENTITY_PATH = "call-plan"
+DELIVERY_ROUTE_FIELD = "x_studio_delivery_route"  # info saja di response
 EXTERNAL_CODE_PREFIX = "ODOO-CP-"
 
 # Satu-satunya nilai yang terbukti tersimpan (dev 12 Oktober). Tampil di UI
@@ -144,6 +145,8 @@ class CallPlanSyncService:
         codes = {v["customer_external_code"] for v in planned}
         esuite_customers = self.esuite.find_by_external_codes("customers", codes) if codes else {}
 
+        routes = self._delivery_routes() if planned else {}
+
         visits, items, skipped = [], [], []
         not_mapped_codes = set()
         for v in planned:
@@ -155,6 +158,7 @@ class CallPlanSyncService:
                 "day": DAY_LABELS[d.weekday()],
                 "week_of_month": week_of_month(d)[2],
                 "call_plan_external_code": f"{EXTERNAL_CODE_PREFIX}{v['odoo_partner_id']}-{d:%Y%m%d}",
+                "delivery_route": routes.get(v["odoo_partner_id"]),
             }
             customer = esuite_customers.get(v["customer_external_code"])
             if not customer:
@@ -189,6 +193,13 @@ class CallPlanSyncService:
                 "date_plan": {"date": epoch_utc_midnight(d)},
             })
 
+        # Ringkasan per tanggal -> rute (info utk dicocokkan dgn jadwal sales).
+        per_date_route: dict[str, dict[str, int]] = {}
+        for r in visits:
+            day_routes = per_date_route.setdefault(f"{r['date']} {r['day']}", {})
+            key = r["delivery_route"] or "(tanpa rute)"
+            day_routes[key] = day_routes.get(key, 0) + 1
+
         batches = [items[i:i + resolved_batch_size] for i in range(0, len(items), resolved_batch_size)]
         result = {
             "dry_run": dry_run,
@@ -202,6 +213,7 @@ class CallPlanSyncService:
             "customer_not_mapped_to_salesman_count": len(not_mapped_codes),
             "batch_size": resolved_batch_size,
             "batch_count": len(batches),
+            "per_date_route": per_date_route,
             "visits": visits,
             "skipped": skipped,
             "invalid_rows": invalid_rows,
@@ -240,6 +252,25 @@ class CallPlanSyncService:
             {"synced_count": pushed, "failed_count": failed, "total_matched_in_odoo": len(items)},
             note=f"{date_from}..{date_to} slots={','.join(s['odoo_slot'] for s in slot_infos)}",
         )
+        return result
+
+    def _delivery_routes(self) -> dict[int, str]:
+        """
+        id partner -> rute pengiriman (`x_studio_delivery_route`), INFO saja
+        utk cek jadwal vs rute sales (12 Oktober). Gagal baca = kosong, tidak
+        menggagalkan sync.
+        """
+        try:
+            rows = self.odoo.get_customer_field_values(DELIVERY_ROUTE_FIELD)
+        except AppError:
+            return {}
+        result = {}
+        for r in rows:
+            value = r.get(DELIVERY_ROUTE_FIELD)
+            if isinstance(value, list):  # many2one [id, name]
+                value = value[1] if len(value) > 1 else None
+            if value:
+                result[r["id"]] = str(value)
         return result
 
     @staticmethod
