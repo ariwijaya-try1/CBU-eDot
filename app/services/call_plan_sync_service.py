@@ -94,16 +94,24 @@ class CallPlanSyncService:
             raise ValidationError("Pilih minimal 1 slot sales", details={"slots": slots})
         resolved_batch_size = min(batch_size or DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE)
 
-        # 1. Resolve slot: Odoo res.users id + akun eSuite (id internal & branch).
-        slot_infos = [self._resolve_slot(name) for name in dict.fromkeys(slots)]
+        # 1. Customer ber-visit (semua) -> id Salesperson diambil dari field
+        # user_id customer itu sendiri, bukan cari res.users (12 Oktober:
+        # cari res.users by nama mengembalikan 0 di live -- kemungkinan akses
+        # akun API / user slot tidak aktif / share).
+        partners_all = self.odoo.get_customers_with_visit_schedule(VISIT_FIELDS)
+        user_ids_by_name: dict[str, set[int]] = {}
+        for p in partners_all:
+            if p.get("user_id"):
+                user_ids_by_name.setdefault(p["user_id"][1], set()).add(p["user_id"][0])
+
+        # 2. Resolve slot: id Odoo (dari customer) + akun eSuite (id internal & branch).
+        slot_infos = [self._resolve_slot(name, user_ids_by_name) for name in dict.fromkeys(slots)]
         by_user_id = {s["odoo_user_id"]: s for s in slot_infos}
 
-        # 2. Customer ber-visit milik slot terpilih -> tanggal kunjungan.
+        # 3. Customer ber-visit milik slot terpilih -> tanggal kunjungan.
         vs = VisitScheduleService()
         selections = {f: vs._selection_map(f) for f in VISIT_FIELDS}
-        partners = self.odoo.get_customers_with_visit_schedule(
-            VISIT_FIELDS, salesperson_ids=list(by_user_id)
-        )
+        partners = [p for p in partners_all if p.get("user_id") and p["user_id"][0] in by_user_id]
 
         invalid_rows, planned = [], []
         for p in partners:
@@ -248,7 +256,7 @@ class CallPlanSyncService:
                 details={"date_from": str(date_from), "date_to": str(date_to)},
             )
 
-    def _resolve_slot(self, odoo_slot: str) -> dict:
+    def _resolve_slot(self, odoo_slot: str, user_ids_by_name: dict[str, set[int]]) -> dict:
         mapping = SLOTS_BY_NAME.get(odoo_slot)
         if not mapping:
             raise ValidationError(
@@ -256,13 +264,18 @@ class CallPlanSyncService:
                 details={"odoo_slot": odoo_slot},
             )
 
-        # Odoo: nama slot harus PERSIS 1 res.users (ilike lalu disaring exact).
-        users = [u for u in self.odoo.get_salespersons(name=odoo_slot) if u.get("name") == odoo_slot]
-        if len(users) != 1:
+        # Odoo: nama slot harus PERSIS sama dgn Salesperson di customer ber-visit,
+        # dan menunjuk tepat 1 id.
+        user_ids = sorted(user_ids_by_name.get(odoo_slot, set()))
+        if len(user_ids) != 1:
             raise ValidationError(
-                f"Slot Odoo '{odoo_slot}' ditemukan {len(users)} res.users (harus tepat 1) -- "
-                "cek nama Salesperson di Odoo atau tabel mapping",
-                details={"odoo_slot": odoo_slot, "found": users},
+                f"Slot Odoo '{odoo_slot}' ditemukan di {len(user_ids)} Salesperson customer ber-visit "
+                "(harus tepat 1) -- cek nama Salesperson di Odoo atau tabel mapping",
+                details={
+                    "odoo_slot": odoo_slot,
+                    "found_user_ids": user_ids,
+                    "salespersons_with_visit_data": sorted(user_ids_by_name),
+                },
             )
 
         # eSuite: employee_id -> id internal + branch.
@@ -290,7 +303,7 @@ class CallPlanSyncService:
 
         return {
             "odoo_slot": odoo_slot,
-            "odoo_user_id": users[0]["id"],
+            "odoo_user_id": user_ids[0],
             "person": mapping["person"],
             "esuite_employee_id": mapping["esuite_employee_id"],
             "esuite_id": emp.get("id"),
