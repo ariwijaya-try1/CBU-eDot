@@ -33,14 +33,15 @@ def upsert_customer_geo_branch_sales(
         ),
     ),
     branch_external_codes: str | None = Query(
-        "ODOO-COMPANY-2",
+        "",
         description=(
             "OPSIONAL -- external_code Branch (format 'ODOO-COMPANY-{id}', "
-            "sama dengan /sync/branch), comma-separated kalau >1. DEFAULT "
-            "'ODOO-COMPANY-2' (branch yang dipakai hampir semua backfill "
-            "customer saat ini, instruksi user 28 Agustus 2026) -- ganti "
-            "manual kalau customer ini butuh branch lain. Kosongkan (string "
-            "kosong) kalau memang tidak mau update branch sama sekali -- key "
+            "sama dengan /sync/branch), comma-separated kalau >1. 🆕 DEFAULT "
+            "KOSONG (10 Oktober 2026, keputusan user -- sebelumnya "
+            "'ODOO-COMPANY-2'/SFC sejak 28 Agustus): kosong = branch TIDAK "
+            "dikirim, branch existing customer di eSuite (hasil "
+            "/sync/customers dari company Odoo) TIDAK berubah. Isi manual "
+            "HANYA kalau memang mau mengganti branch customer ini. Kosong -- key "
             "\"branchs\" TIDAK ikut dikirim (partial-merge, branch existing "
             "TIDAK ter-reset), dipakai untuk mass update SALESMAN SAJA masa "
             "pre-live saat branch customer sudah terbawa otomatis dari "
@@ -110,10 +111,13 @@ def upsert_customer_geo_branch_sales(
     diabaikan di /unmap/customer-sales) -- kalau benar, risiko numpuk ini
     tidak terjadi, tapi belum ada test live yang membuktikan/membantah.
 
-    branch_external_codes punya DEFAULT ("ODOO-COMPANY-2", branch yang
-    dipakai hampir semua customer saat ini) supaya tidak perlu diisi manual
-    tiap panggilan -- tetap bisa dioverride atau dikosongkan kalau customer
-    tertentu butuh beda.
+    🆕 10 Oktober 2026: branch_external_codes SEKARANG DEFAULT KOSONG
+    (keputusan user -- MENGGANTIKAN default "ODOO-COMPANY-2" sejak 28
+    Agustus 2026). Alasan: branch customer sudah otomatis dari company Odoo
+    lewat /sync/customers dan customer kini tersebar di 3 branch (CBU/SFC/
+    SBU); default SFC terbukti memindahkan customer ke branch yang salah
+    (tes 7 Oktober, ODOO-PARTNER-39353). Kalau tidak diisi, key "branchs"
+    TIDAK dikirim -- branch existing tidak berubah.
 
     🆕 14 September 2026: salesman_ids SEKARANG DEFAULT KOSONG (instruksi
     user -- MENGGANTIKAN default 1 kode tetap "202600003" yang dipakai

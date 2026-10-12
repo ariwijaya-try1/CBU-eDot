@@ -1,7 +1,10 @@
+from datetime import date
+
 from fastapi import APIRouter, Query
 from app.clients.odoo_client import OdooClient
 from app.core.exceptions import NotFoundError, OdooRPCError, ValidationError
 from app.core.scope import IN_SCOPE_COMPANY_NAMES
+from app.services.visit_schedule_service import VisitScheduleService
 
 router = APIRouter()
 odoo = OdooClient()
@@ -655,3 +658,47 @@ def get_odoo_stock_quant_raw(
     itu bukti langsung sumber leak-nya.
     """
     return odoo.get_stock_quants(product_id=product_id)
+
+
+@router.get("/odoo/visit-today")
+def get_odoo_visit_today(
+    visit_date: date | None = Query(
+        default=None,
+        description="OPSIONAL -- tanggal kunjungan YYYY-MM-DD. Kosong = hari ini (WITA).",
+    ),
+    salesperson_ids: str | None = Query(
+        default=None,
+        description="OPSIONAL -- id res.users (Salesperson Odoo, field user_id di Contact), pisah koma. Lihat GET /odoo/salesperson.",
+    ),
+    company_id: int | None = Query(
+        default=None,
+        ge=0,
+        description="OPSIONAL -- customer milik res.company id ini saja (lihat GET /odoo/branch). 0 = customer TANPA company.",
+    ),
+):
+    """
+    Daftar outlet yang DIKUNJUNGI sales pada 1 tanggal, dihitung dari visit
+    cycle Odoo (`x_studio_visit_cycle` + `x_studio_visit_day` +
+    `x_studio_visit_frequency` di Contact) -- 12 Oktober 2026. Read-only.
+
+    Pakai: copy `external_codes_csv` ke
+    `POST /api/sync/outlet-stock?external_codes=...` (dry_run dulu).
+
+    Aturan minggu: minggu kalender Senin-Minggu; minggu yang memuat tgl 1 =
+    minggu ke-1 bulan itu. M1 tiap minggu; M2C13 minggu 1 & 3; M2C24 minggu
+    2 & 4; M4C2 minggu 2; M4C3 minggu 3 (minggu ke-5 dilewati utk M2/M4).
+    Baris visit tidak valid (terisi sebagian, kode di luar daftar, pasangan
+    frequency salah) dilewati dan dilaporkan di `invalid_rows`.
+    """
+    ids = None
+    if salesperson_ids:
+        try:
+            ids = [int(i.strip()) for i in salesperson_ids.split(",") if i.strip()]
+        except ValueError:
+            raise ValidationError(
+                f"Parameter 'salesperson_ids' harus angka semua, pisah koma -- dapat: '{salesperson_ids}'",
+                details={"salesperson_ids": salesperson_ids},
+            )
+    return VisitScheduleService().get_visits_on(
+        visit_date=visit_date, salesperson_ids=ids, company_id=company_id
+    )

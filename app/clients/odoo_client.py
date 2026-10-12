@@ -1568,3 +1568,35 @@ class OdooClient:
             domain,
             {"fields": ["id", "name"]},
         )
+
+    def get_customers_with_visit_schedule(
+        self,
+        fields: list[str],
+        salesperson_ids: list[int] | None = None,
+        company_id: int | None = None,
+    ):
+        """
+        Customer (customer_rank > 0 & active, filter sama /sync/customers)
+        yang MINIMAL 1 field visit-nya terisi -- dipakai GET
+        /odoo/visit-today (12 Oktober 2026). Customer tanpa data visit sama
+        sekali (mis. tim FS) tidak ikut.
+
+        fields: nama field visit (cycle, day, frequency).
+        salesperson_ids: filter res.partner.user_id (Salesperson).
+        company_id: None = semua, 0 = tanpa company, >0 = company itu
+        (aturan sama get_contacts()).
+        """
+        # Domain prefix '|' = OR utk N kondisi berikutnya (N-1 operator '|').
+        any_filled = ["|"] * (len(fields) - 1) + [(f, "!=", False) for f in fields]
+        conditions = [("customer_rank", ">", 0), ("active", "=", True)] + any_filled
+        if salesperson_ids:
+            conditions.append(("user_id", "in", salesperson_ids))
+        if company_id is not None:
+            conditions.append(("company_id", "=", company_id or False))
+
+        return self._execute(
+            "res.partner",
+            "search_read",
+            [conditions],
+            {"fields": ["id", "name", "user_id", "company_id"] + fields, "order": "name"},
+        )
