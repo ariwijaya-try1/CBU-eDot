@@ -43,6 +43,19 @@ CITY_NOISE_WORDS = {"KOTA", "KAB", "KABUPATEN", "ADM", "ADMINISTRASI"}
 
 _LEVEL_KEYS = ("province", "city", "district", "village")
 
+# Alias nama DESA (9 Oktober 2026, keputusan user) -- untuk ejaan desa di master
+# Odoo (modul regional) yang SALAH dan tidak bisa ditangani aturan longgar.
+# key = jalur Odoo yang sudah dinormalisasi (provinsi, kota, kecamatan, desa),
+# value = nama desa versi eSuite. Desa yang cocok lewat alias tetap dilaporkan
+# di report["matched_by_relaxed_name"] supaya kelihatan.
+# Tambah baris baru di sini kalau ketemu kasus serupa (lihat esuite_candidates
+# di laporan dry run).
+VILLAGE_NAME_ALIASES: dict[tuple[str, str, str, str], str] = {
+    # Odoo "Semarapura Klod" (salah ejaan; desa tetangganya sendiri ditulis
+    # "Semarapura Kelod Kangin") -> eSuite "SEMARAPURA KELOD"
+    ("BALI", "KAB KLUNGKUNG", "KLUNGKUNG", "SEMARAPURA KLOD"): "SEMARAPURA KELOD",
+}
+
 
 def normalize_area_name(value) -> str:
     """
@@ -111,7 +124,8 @@ class AdminAreaResolver:
             "unique_villages": 0,
             "resolved_villages": 0,
             # desa yang cocok lewat aturan nama longgar (provinsi/kota beda
-            # penulisan) -- supaya bisa dicek mata, bukan diam-diam
+            # penulisan) atau lewat VILLAGE_NAME_ALIASES -- supaya bisa dicek
+            # mata, bukan diam-diam
             "matched_by_relaxed_name": [],
             "unresolved": [],
         }
@@ -203,6 +217,11 @@ class AdminAreaResolver:
         esuite_path: terisi hanya kalau cocoknya lewat tahap LONGGAR.
         """
         target = [normalize_area_name(names[k]) for k in _LEVEL_KEYS]
+        alias = VILLAGE_NAME_ALIASES.get(tuple(target))
+        if alias:
+            # ganti nama desa sebelum dicari; level lain tetap dari Odoo
+            names = {**names, "village": alias}
+            target = target[:3] + [normalize_area_name(alias)]
         target_relaxed = _relaxed_path(target)
 
         exact: list[list[dict]] = []
@@ -280,7 +299,8 @@ class AdminAreaResolver:
 
         for matches, is_relaxed in ((exact, False), (relaxed, True)):
             if len(matches) == 1:
-                esuite_path = self._path_text(matches[0]) if is_relaxed else None
+                # cocok lewat aturan longgar ATAU alias -> laporkan jalur eSuite
+                esuite_path = self._path_text(matches[0]) if (is_relaxed or alias) else None
                 return to_administrative_level(matches[0]), "matched", [], esuite_path
             if len(matches) > 1:
                 return None, "ambiguous", [

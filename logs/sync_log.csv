@@ -167,3 +167,9 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-10-09T00:09:02.535594+00:00,product,upsert,1279,1279,0,1,success,,
 2026-10-09T02:49:47.737081+00:00,outlet_stock,upsert,32,648,0,13,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 32 customer, 648 item, 0 sudah berisi stok, 0 gagal dikembalikan, 0 customer di-skip, 66 produk di-skip, 13 batch @ max 50 item"
 2026-10-09T08:42:43.054243+00:00,customer,upsert,3572,3572,0,4,success,,
+2026-10-09T09:15:32.471763+00:00,customer,upsert,3581,3581,0,4,success,,
+2026-10-10T00:14:17.819046+00:00,outlet_stock,upsert,1,6,0,1,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 1 customer, 6 item, 0 sudah berisi stok, 0 gagal dikembalikan, 0 customer di-skip, 9 produk di-skip, 1 batch @ max 50 item"
+2026-10-10T00:24:46.181033+00:00,outlet_stock,upsert,1,6,0,1,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 1 customer, 6 item, 1 sudah berisi stok, 0 gagal dikembalikan, 0 customer di-skip, 9 produk di-skip, 1 batch @ max 50 item"
+2026-10-10T01:14:08.309816+00:00,outlet_stock,upsert,100,444,1,9,partial,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 20 customer, 445 item, 1 sudah berisi stok, 0 gagal dikembalikan, 80 customer di-skip, 127 produk di-skip, 9 batch @ max 50 item"
+2026-10-10T01:20:39.692926+00:00,outlet_stock,upsert,1,257,0,6,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 1 customer, 257 item, 0 sudah berisi stok, 0 gagal dikembalikan, 0 customer di-skip, 86 produk di-skip, 6 batch @ max 50 item"
+2026-10-10T01:50:07.057461+00:00,outlet_stock,upsert,100,1909,3,39,partial,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 83 customer, 1912 item, 0 sudah berisi stok, 0 gagal dikembalikan, 17 customer di-skip, 115 produk di-skip, 39 batch @ max 50 item"
