@@ -47,6 +47,10 @@ from app.services.visit_schedule_service import (
 ENTITY_PATH = "call-plan"
 DELIVERY_ROUTE_FIELD = "x_studio_delivery_route"  # info saja di response
 EXTERNAL_CODE_PREFIX = "ODOO-CP-"
+# 16 Oktober 2026 -- mode tes (test_employee_id): data visit slot Odoo dikirim
+# ke akun eSuite lain (akun testing). Kode dibedakan supaya TIDAK menimpa
+# call plan asli slot tsb (upsert by external_code, terbukti 12 Oktober).
+TEST_EXTERNAL_CODE_PREFIX = "ODOO-CP-TEST-"
 
 # Satu-satunya nilai yang terbukti tersimpan (dev 12 Oktober). Tampil di UI
 # sebagai "Non - Call Plan" -- MENUNGGU jawaban dev nilai utk tipe "Call Plan".
@@ -89,10 +93,21 @@ class CallPlanSyncService:
         dry_run: bool = True,
         batch_size: int | None = None,
         include_payload: bool = False,
+        test_employee_id: str | None = None,
+        external_codes: str | None = None,
+        limit: int | None = None,
     ) -> dict:
         self._validate_range(date_from, date_to)
         if not slots:
             raise ValidationError("Pilih minimal 1 slot sales", details={"slots": slots})
+        test_employee_id = (test_employee_id or "").strip() or None
+        if test_employee_id and len(set(slots)) != 1:
+            raise ValidationError(
+                "Mode tes (test_employee_id) hanya boleh 1 slot",
+                details={"slots": slots, "test_employee_id": test_employee_id},
+            )
+        # Filter customer tertentu (opsional), format ODOO-PARTNER-{id}.
+        wanted_codes = {c.strip() for c in (external_codes or "").split(",") if c.strip()}
         resolved_batch_size = min(batch_size or DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE)
 
         # 1. Customer ber-visit (semua) -> id Salesperson diambil dari field
@@ -106,13 +121,15 @@ class CallPlanSyncService:
                 user_ids_by_name.setdefault(p["user_id"][1], set()).add(p["user_id"][0])
 
         # 2. Resolve slot: id Odoo (dari customer) + akun eSuite (id internal & branch).
-        slot_infos = [self._resolve_slot(name, user_ids_by_name) for name in dict.fromkeys(slots)]
+        slot_infos = [self._resolve_slot(name, user_ids_by_name, test_employee_id) for name in dict.fromkeys(slots)]
         by_user_id = {s["odoo_user_id"]: s for s in slot_infos}
 
         # 3. Customer ber-visit milik slot terpilih -> tanggal kunjungan.
         vs = VisitScheduleService()
         selections = {f: vs._selection_map(f) for f in VISIT_FIELDS}
         partners = [p for p in partners_all if p.get("user_id") and p["user_id"][0] in by_user_id]
+        if wanted_codes:
+            partners = [p for p in partners if f"{CUSTOMER_EXTERNAL_CODE_PREFIX}{p['id']}" in wanted_codes]
 
         invalid_rows, planned = [], []
         for p in partners:
@@ -157,7 +174,7 @@ class CallPlanSyncService:
                 "date": d.isoformat(),
                 "day": DAY_LABELS[d.weekday()],
                 "week_of_month": week_of_month(d)[2],
-                "call_plan_external_code": f"{EXTERNAL_CODE_PREFIX}{v['odoo_partner_id']}-{d:%Y%m%d}",
+                "call_plan_external_code": f"{slot['call_plan_code_prefix']}{v['odoo_partner_id']}-{d:%Y%m%d}",
                 "delivery_route": routes.get(v["odoo_partner_id"]),
             }
             customer = esuite_customers.get(v["customer_external_code"])
@@ -182,6 +199,8 @@ class CallPlanSyncService:
                 not_mapped_codes.add(v["customer_external_code"])
             row["salesman_mapped_on_customer"] = mapped
 
+            if limit and len(visits) >= limit:
+                continue  # batas jumlah jadwal (tes kecil); sisanya tidak dikirim
             visits.append(row)
             slot["visit_count"] += 1
             items.append({
@@ -206,6 +225,8 @@ class CallPlanSyncService:
             "date_from": date_from.isoformat(),
             "date_to": date_to.isoformat(),
             "call_plan_type": CALL_PLAN_TYPE,
+            "test_mode": bool(test_employee_id),
+            "limit": limit,
             "slots": [dict(s) for s in slot_infos],
             "visit_count": len(items),
             "skipped_count": len(skipped),
@@ -287,7 +308,9 @@ class CallPlanSyncService:
                 details={"date_from": str(date_from), "date_to": str(date_to)},
             )
 
-    def _resolve_slot(self, odoo_slot: str, user_ids_by_name: dict[str, set[int]]) -> dict:
+    def _resolve_slot(
+        self, odoo_slot: str, user_ids_by_name: dict[str, set[int]], test_employee_id: str | None = None
+    ) -> dict:
         mapping = SLOTS_BY_NAME.get(odoo_slot)
         if not mapping:
             raise ValidationError(
@@ -309,23 +332,26 @@ class CallPlanSyncService:
                 },
             )
 
-        # eSuite: employee_id -> id internal + branch.
-        records = (self.esuite.pull_by_param("employee", "employee_id", mapping["esuite_employee_id"]).get("data") or [])
+        # eSuite: employee_id -> id internal + branch. Mode tes: akun pengganti.
+        employee_id = test_employee_id or mapping["esuite_employee_id"]
+        records = (self.esuite.pull_by_param("employee", "employee_id", employee_id).get("data") or [])
         if not records:
             raise ValidationError(
-                f"Akun eSuite employee_id '{mapping['esuite_employee_id']}' (slot '{odoo_slot}') tidak ditemukan",
-                details={"odoo_slot": odoo_slot, "esuite_employee_id": mapping["esuite_employee_id"]},
+                f"Akun eSuite employee_id '{employee_id}' (slot '{odoo_slot}') tidak ditemukan",
+                details={"odoo_slot": odoo_slot, "esuite_employee_id": employee_id},
             )
         emp = records[0]
         branch_ids = [b.get("id") for b in (emp.get("branches") or []) if b.get("id")]
         if not branch_ids:
             raise ValidationError(
                 f"Akun eSuite '{emp.get('name')}' (slot '{odoo_slot}') tidak punya branch",
-                details={"odoo_slot": odoo_slot, "esuite_employee_id": mapping["esuite_employee_id"]},
+                details={"odoo_slot": odoo_slot, "esuite_employee_id": employee_id},
             )
 
         warnings = []
-        if emp.get("username") and emp.get("username") != mapping["esuite_username"]:
+        if test_employee_id:
+            warnings.append(f"MODE TES: jadwal slot '{odoo_slot}' dikirim ke akun '{emp.get('username')}', bukan '{mapping['esuite_username']}'")
+        elif emp.get("username") and emp.get("username") != mapping["esuite_username"]:
             warnings.append(
                 f"username eSuite '{emp.get('username')}' beda dgn tabel mapping '{mapping['esuite_username']}'"
             )
@@ -335,8 +361,11 @@ class CallPlanSyncService:
         return {
             "odoo_slot": odoo_slot,
             "odoo_user_id": user_ids[0],
-            "person": mapping["person"],
-            "esuite_employee_id": mapping["esuite_employee_id"],
+            "person": "TEST" if test_employee_id else mapping["person"],
+            "esuite_employee_id": employee_id,
+            "call_plan_code_prefix": (
+                f"{TEST_EXTERNAL_CODE_PREFIX}{employee_id}-" if test_employee_id else EXTERNAL_CODE_PREFIX
+            ),
             "esuite_id": emp.get("id"),
             "esuite_name": emp.get("name"),
             "esuite_username": emp.get("username"),

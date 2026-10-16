@@ -31,6 +31,21 @@ def sync_call_plan(
         default=None, ge=1, le=MAX_BATCH_SIZE, description=f"OPSIONAL -- baris per request ke eSuite (default 50, maks {MAX_BATCH_SIZE})."
     ),
     include_payload: bool = Query(default=False, description="OPSIONAL -- sertakan body yang dikirim ke eSuite."),
+    test_employee_id: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL, MODE TES -- `employee_id` akun eSuite pengganti (mis. akun testing Salesman_12). "
+            "Data visit tetap dari slot Odoo terpilih (hanya 1 slot), dikirim ke akun ini. "
+            "Kode jadi `ODOO-CP-TEST-{employee_id}-{id partner}-{YYYYMMDD}` -> tidak menimpa call plan asli."
+        ),
+    ),
+    external_codes: str | None = Query(
+        default=None,
+        description="OPSIONAL -- customer tertentu saja, comma-separated, format 'ODOO-PARTNER-{id}'.",
+    ),
+    limit: int | None = Query(
+        default=None, ge=1, description="OPSIONAL -- kirim maksimal N jadwal (utk tes kecil; call plan belum bisa dihapus)."
+    ),
 ):
     """
     Kirim jadwal kunjungan sales (call plan) dari visit cycle Odoo ke eSuite
@@ -58,4 +73,7 @@ def sync_call_plan(
         dry_run=dry_run,
         batch_size=batch_size,
         include_payload=include_payload,
+        test_employee_id=test_employee_id,
+        external_codes=external_codes,
+        limit=limit,
     )

@@ -15,14 +15,16 @@ esuite_employee_id : `employee_id` akun eSuite (GET /employee?employee_id=..),
                      di-resolve ke id internal + branch saat jalan.
 
 Sumber employee_id: hasil GET /employee PROD yang dikirim user 6 Oktober 2026.
+14 Oktober 2026: orang di Salesman_3 (MT04) & Salesman_5 (MT02) ditukar
+(Winaya <-> Fani) -- hanya label `person`, slot & akun tetap.
 """
 
 SALESMAN_SLOTS = [
     {"odoo_slot": "[SALES] BAL GT02", "esuite_employee_id": "202600016", "esuite_username": "Salesman_1", "person": "Ali (GT)"},
     {"odoo_slot": "[SALES] BAL GT01", "esuite_employee_id": "202600019", "esuite_username": "Salesman_2", "person": "Angga (GT)"},
-    {"odoo_slot": "[SALES] BAL MT04", "esuite_employee_id": "202600009", "esuite_username": "Salesman_3", "person": "Winaya (MT)"},
+    {"odoo_slot": "[SALES] BAL MT04", "esuite_employee_id": "202600009", "esuite_username": "Salesman_3", "person": "Fani (MT)"},
     {"odoo_slot": "[SALES] BAL MT03", "esuite_employee_id": "202600014", "esuite_username": "Salesman_4", "person": "Anda (MT)"},
-    {"odoo_slot": "[SALES] BAL MT02", "esuite_employee_id": "202600020", "esuite_username": "Salesman_5", "person": "Fani (MT)"},
+    {"odoo_slot": "[SALES] BAL MT02", "esuite_employee_id": "202600020", "esuite_username": "Salesman_5", "person": "Winaya (MT)"},
     {"odoo_slot": "[SALES] BAL MT01", "esuite_employee_id": "202600017", "esuite_username": "Salesman_6", "person": "Yona (MT)"},
 ]
 
