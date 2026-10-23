@@ -8,8 +8,9 @@ visit_schedule_service.py), lalu dikirim ke webhook `POST /call-plan`
 
 Format payload = contoh dev eDot 12 Oktober 2026 (contoh Postman vendor lama
 SALAH): `employee.id` (id internal GET /employee), `customer.id`, `branch.id`,
-`date_plan: {"date": <unix epoch detik>}`, `type`. Terverifikasi tampil di
-UI Call Plan List (13/10/2026, type "Non - Call Plan").
+`date_plan: {"date": <unix epoch detik>, "timezone": "+08:00"}`, `type`.
+21 Oktober 2026 (jawaban dev): `type` = "generated" (tampil "Call Plan",
+dihitung di KPI/laporan); kirim ulang external_code sama = update type.
 
 Aturan:
 - Mapping slot Odoo -> akun eDot: app/core/salesman_slots.py (di bridge).
@@ -52,9 +53,13 @@ EXTERNAL_CODE_PREFIX = "ODOO-CP-"
 # call plan asli slot tsb (upsert by external_code, terbukti 12 Oktober).
 TEST_EXTERNAL_CODE_PREFIX = "ODOO-CP-TEST-"
 
-# Satu-satunya nilai yang terbukti tersimpan (dev 12 Oktober). Tampil di UI
-# sebagai "Non - Call Plan" -- MENUNGGU jawaban dev nilai utk tipe "Call Plan".
-CALL_PLAN_TYPE = "non_generated"
+# 21 Oktober 2026 (dev): "generated" = jadwal rutin -> tampil "Call Plan" &
+# dihitung di KPI. Wajib huruf kecil persis (salah ketik tampil "Random").
+# Sebelumnya "non_generated" (Non - Call Plan).
+CALL_PLAN_TYPE = "generated"
+# 21 Oktober 2026 (dev): tanpa timezone tanggal dihitung UTC. Semua slot
+# sales saat ini Bali (WITA). Epoch tetap 00:00 UTC (= 08:00 WITA, tgl sama).
+CALL_PLAN_TIMEZONE = "+08:00"
 
 MAX_RANGE_DAYS = 31          # batas rentang tanggal per request (pengaman)
 DEFAULT_BATCH_SIZE = 50
@@ -209,7 +214,7 @@ class CallPlanSyncService:
                 "employee": {"id": slot["esuite_id"]},
                 "customer": {"id": customer.get("id")},
                 "branch": {"id": branch_id},
-                "date_plan": {"date": epoch_utc_midnight(d)},
+                "date_plan": {"date": epoch_utc_midnight(d), "timezone": CALL_PLAN_TIMEZONE},
             })
 
         # Ringkasan per tanggal -> rute (info utk dicocokkan dgn jadwal sales).

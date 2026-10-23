@@ -1,0 +1,107 @@
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import JSONResponse
+
+from app.api.routes.branch import router as branch_router, deactivate_router as branch_deactivate_router
+from app.api.routes.warehouse import router as warehouse_router
+from app.api.routes.product_category import router as product_category_router
+from app.api.routes.product import router as product_router
+from app.api.routes.customer import router as customer_router, deactivate_router as customer_deactivate_router
+from app.api.routes.customer_group import router as customer_group_router
+from app.api.routes.customer_grouping import router as customer_grouping_router
+from app.api.routes.customer_sales_mapping import router as customer_sales_mapping_router, unmap_router as customer_sales_unmap_router
+from app.api.routes.customer_pricelist_mapping import router as customer_pricelist_mapping_router
+from app.api.routes.customer_geolocation import router as customer_geolocation_router
+from app.api.routes.customer_upsert_geo_branch_sales import router as customer_upsert_geo_branch_sales_router
+from app.api.routes.mass_customer_sales_mapping import router as mass_customer_sales_mapping_router
+from app.api.routes.stock_matrix import router as stock_matrix_router
+from app.api.routes.pricelist import router as pricelist_router
+from app.api.routes.salesman_division import router as salesman_division_router, deactivate_router as salesman_division_deactivate_router
+from app.api.routes.odoo_get import router as odoo_get_router
+from app.api.routes.debug import router as debug_router
+from app.api.routes.order_history import router as order_history_router
+from app.api.routes.outlet_stock import router as outlet_stock_router
+from app.api.routes.call_plan import router as call_plan_router
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+from app.core.config import settings
+from app.core.security import verify_api_key
+from app.core.exceptions import AppError
+from app.core.limiter import limiter
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    dependencies=[Depends(verify_api_key)],
+    # persistAuthorization -- API key yang diisi lewat tombol Authorize
+    # disimpan browser (localStorage), jadi tetap ke-fill otomatis walau
+    # Swagger di-reload (mis. setelah uvicorn --reload restart karena ada
+    # update code). Tidak ada hubungannya dengan expiry token -- auth kita
+    # tetap static API key tanpa masa berlaku, ini cuma soal state UI.
+    swagger_ui_parameters={"persistAuthorization": True},
+)
+
+# Rate limiting (28 Agustus 2026) -- AKTIVASI slowapi yang sebelumnya cuma
+# ke-setup di app/core/limiter.py tapi tidak pernah dipasang ke app (lihat
+# security_audit.md temuan #2, 16 Agustus). 3 baris ini yang sebelumnya
+# hilang: daftarkan limiter ke app.state, pasang exception handler bawaan
+# slowapi (balikin 429 rapi kalau limit kelewat), pasang middleware-nya.
+# default_limits (300/menit per IP) diatur di limiter.py itu sendiri, BUKAN
+# di sini -- berlaku otomatis ke SEMUA endpoint tanpa perlu decorator
+# @limiter.limit(...) satu-satu di tiap route (minimal invasive, tidak
+# perlu ubah file route manapun).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(HTTPException)
+def http_exception_handler(request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "message": exc.detail},
+    )
+
+
+@app.exception_handler(AppError)
+def app_error_handler(request, exc: AppError):
+    # Menangkap semua turunan AppError (Odoo*, Esuite*, Validation, NotFound)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, **exc.to_dict()},
+    )
+
+
+# tags= di sini CUMA ngatur pengelompokan judul di Swagger UI -- tidak
+# mengubah path/behavior endpoint apapun. Sebelumnya semua router nggak
+# dikasih tags jadi numpuk di grup "default"; sekarang dikelompokkan biar
+# gampang dibedain endpoint sync vs endpoint get-inspeksi Odoo (16 Agustus 2026).
+app.include_router(branch_router, prefix="/api", tags=["Sync"])
+app.include_router(branch_deactivate_router, prefix="/api", tags=["Deactivate"])
+app.include_router(warehouse_router, prefix="/api", tags=["Sync"])
+app.include_router(product_category_router, prefix="/api", tags=["Sync"])
+app.include_router(product_router, prefix="/api", tags=["Sync"])
+app.include_router(customer_router, prefix="/api", tags=["Sync"])
+app.include_router(customer_deactivate_router, prefix="/api", tags=["Deactivate"])
+app.include_router(customer_group_router, prefix="/api", tags=["Sync"])
+app.include_router(customer_grouping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_pricelist_mapping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_upsert_geo_branch_sales_router, prefix="/api", tags=["Mapping"])
+app.include_router(mass_customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
+app.include_router(customer_geolocation_router, prefix="/api", tags=["Update"])
+app.include_router(customer_sales_unmap_router, prefix="/api", tags=["Un-Map"])
+app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])
+app.include_router(pricelist_router, prefix="/api", tags=["Sync"])
+app.include_router(salesman_division_router, prefix="/api", tags=["Sync"])
+app.include_router(salesman_division_deactivate_router, prefix="/api", tags=["Deactivate"])
+app.include_router(odoo_get_router, prefix="/api", tags=["odoo - Get"])
+app.include_router(debug_router, prefix="/api", tags=["Debug"])
+app.include_router(order_history_router, prefix="/api", tags=["Sync"])
+app.include_router(outlet_stock_router, prefix="/api", tags=["Sync"])
+app.include_router(call_plan_router, prefix="/api", tags=["Sync"])
+
+
+@app.get("/")
+def root():
+    return {"status": "ok"}

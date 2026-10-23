@@ -1,0 +1,515 @@
+id,state_id/id,name
+res_city_00001,base.state_id_ac,Kab. Aceh Selatan
+res_city_00002,base.state_id_ac,Kab. Aceh Tenggara
+res_city_00003,base.state_id_ac,Kab. Aceh Timur
+res_city_00004,base.state_id_ac,Kab. Aceh Tengah
+res_city_00005,base.state_id_ac,Kab. Aceh Barat
+res_city_00006,base.state_id_ac,Kab. Aceh Besar
+res_city_00007,base.state_id_ac,Kab. Pidie
+res_city_00008,base.state_id_ac,Kab. Aceh Utara
+res_city_00009,base.state_id_ac,Kab. Simeulue
+res_city_00010,base.state_id_ac,Kab. Aceh Singkil
+res_city_00011,base.state_id_ac,Kab. Bireuen
+res_city_00012,base.state_id_ac,Kab. Aceh Barat Daya
+res_city_00013,base.state_id_ac,Kab. Gayo Lues
+res_city_00014,base.state_id_ac,Kab. Aceh Jaya
+res_city_00015,base.state_id_ac,Kab. Nagan Raya
+res_city_00016,base.state_id_ac,Kab. Aceh Tamiang
+res_city_00017,base.state_id_ac,Kab. Bener Meriah
+res_city_00018,base.state_id_ac,Kab. Pidie Jaya
+res_city_00019,base.state_id_ac,Kota Banda Aceh
+res_city_00020,base.state_id_ac,Kota Sabang
+res_city_00021,base.state_id_ac,Kota Lhokseumawe
+res_city_00022,base.state_id_ac,Kota Langsa
+res_city_00023,base.state_id_ac,Kota Subulussalam
+res_city_00024,base.state_id_su,Kab. Tapanuli Tengah
+res_city_00025,base.state_id_su,Kab. Tapanuli Utara
+res_city_00026,base.state_id_su,Kab. Tapanuli Selatan
+res_city_00027,base.state_id_su,Kab. Nias
+res_city_00028,base.state_id_su,Kab. Langkat
+res_city_00029,base.state_id_su,Kab. Karo
+res_city_00030,base.state_id_su,Kab. Deli Serdang
+res_city_00031,base.state_id_su,Kab. Simalungun
+res_city_00032,base.state_id_su,Kab. Asahan
+res_city_00033,base.state_id_su,Kab. Labuhanbatu
+res_city_00034,base.state_id_su,Kab. Dairi
+res_city_00035,base.state_id_su,Kab. Toba
+res_city_00036,base.state_id_su,Kab. Mandailing Natal
+res_city_00037,base.state_id_su,Kab. Nias Selatan
+res_city_00038,base.state_id_su,Kab. Pakpak Bharat
+res_city_00039,base.state_id_su,Kab. Humbang Hasundutan
+res_city_00040,base.state_id_su,Kab. Samosir
+res_city_00041,base.state_id_su,Kab. Serdang Bedagai
+res_city_00042,base.state_id_su,Kab. Batu Bara
+res_city_00043,base.state_id_su,Kab. Padang Lawas Utara
+res_city_00044,base.state_id_su,Kab. Padang Lawas
+res_city_00045,base.state_id_su,Kab. Labuhanbatu Selatan
+res_city_00046,base.state_id_su,Kab. Labuhanbatu Utara
+res_city_00047,base.state_id_su,Kab. Nias Utara
+res_city_00048,base.state_id_su,Kab. Nias Barat
+res_city_00049,base.state_id_su,Kota Medan
+res_city_00050,base.state_id_su,Kota Pematangsiantar
+res_city_00051,base.state_id_su,Kota Sibolga
+res_city_00052,base.state_id_su,Kota Tanjung Balai
+res_city_00053,base.state_id_su,Kota Binjai
+res_city_00054,base.state_id_su,Kota Tebing Tinggi
+res_city_00055,base.state_id_su,Kota Padangsidimpuan
+res_city_00056,base.state_id_su,Kota Gunungsitoli
+res_city_00057,base.state_id_sb,Kab. Pesisir Selatan
+res_city_00058,base.state_id_sb,Kab. Solok
+res_city_00059,base.state_id_sb,Kab. Sijunjung
+res_city_00060,base.state_id_sb,Kab. Tanah Datar
+res_city_00061,base.state_id_sb,Kab. Padang Pariaman
+res_city_00062,base.state_id_sb,Kab. Agam
+res_city_00063,base.state_id_sb,Kab. Lima Puluh Kota
+res_city_00064,base.state_id_sb,Kab. Pasaman
+res_city_00065,base.state_id_sb,Kab. Kepulauan Mentawai
+res_city_00066,base.state_id_sb,Kab. Dharmasraya
+res_city_00067,base.state_id_sb,Kab. Solok Selatan
+res_city_00068,base.state_id_sb,Kab. Pasaman Barat
+res_city_00069,base.state_id_sb,Kota Padang
+res_city_00070,base.state_id_sb,Kota Solok
+res_city_00071,base.state_id_sb,Kota Sawahlunto
+res_city_00072,base.state_id_sb,Kota Padang Panjang
+res_city_00073,base.state_id_sb,Kota Bukittinggi
+res_city_00074,base.state_id_sb,Kota Payakumbuh
+res_city_00075,base.state_id_sb,Kota Pariaman
+res_city_00076,base.state_id_ri,Kab. Kampar
+res_city_00077,base.state_id_ri,Kab. Indragiri Hulu
+res_city_00078,base.state_id_ri,Kab. Bengkalis
+res_city_00079,base.state_id_ri,Kab. Indragiri Hilir
+res_city_00080,base.state_id_ri,Kab. Pelalawan
+res_city_00081,base.state_id_ri,Kab. Rokan Hulu
+res_city_00082,base.state_id_ri,Kab. Rokan Hilir
+res_city_00083,base.state_id_ri,Kab. Siak
+res_city_00084,base.state_id_ri,Kab. Kuantan Singingi
+res_city_00085,base.state_id_ri,Kab. Kepulauan Meranti
+res_city_00086,base.state_id_ri,Kota Pekanbaru
+res_city_00087,base.state_id_ri,Kota Dumai
+res_city_00088,base.state_id_ja,Kab. Kerinci
+res_city_00089,base.state_id_ja,Kab. Merangin
+res_city_00090,base.state_id_ja,Kab. Sarolangun
+res_city_00091,base.state_id_ja,Kab. Batanghari
+res_city_00092,base.state_id_ja,Kab. Muaro Jambi
+res_city_00093,base.state_id_ja,Kab. Tanjung Jabung Barat
+res_city_00094,base.state_id_ja,Kab. Tanjung Jabung Timur
+res_city_00095,base.state_id_ja,Kab. Bungo
+res_city_00096,base.state_id_ja,Kab. Tebo
+res_city_00097,base.state_id_ja,Kota Jambi
+res_city_00098,base.state_id_ja,Kota Sungai Penuh
+res_city_00099,base.state_id_ss,Kab. Ogan Komering Ulu
+res_city_00100,base.state_id_ss,Kab. Ogan Komering Ilir
+res_city_00101,base.state_id_ss,Kab. Muara Enim
+res_city_00102,base.state_id_ss,Kab. Lahat
+res_city_00103,base.state_id_ss,Kab. Musi Rawas
+res_city_00104,base.state_id_ss,Kab. Musi Banyuasin
+res_city_00105,base.state_id_ss,Kab. Banyuasin
+res_city_00106,base.state_id_ss,Kab. Ogan Komering Ulu Timur
+res_city_00107,base.state_id_ss,Kab. Ogan Komering Ulu Selatan
+res_city_00108,base.state_id_ss,Kab. Ogan Ilir
+res_city_00109,base.state_id_ss,Kab. Empat Lawang
+res_city_00110,base.state_id_ss,Kab. Penukal Abab Lematang Ilir
+res_city_00111,base.state_id_ss,Kab. Musi Rawas Utara
+res_city_00112,base.state_id_ss,Kota Palembang
+res_city_00113,base.state_id_ss,Kota Pagar Alam
+res_city_00114,base.state_id_ss,Kota Lubuk Linggau
+res_city_00115,base.state_id_ss,Kota Prabumulih
+res_city_00116,base.state_id_be,Kab. Bengkulu Selatan
+res_city_00117,base.state_id_be,Kab. Rejang Lebong
+res_city_00118,base.state_id_be,Kab. Bengkulu Utara
+res_city_00119,base.state_id_be,Kab. Kaur
+res_city_00120,base.state_id_be,Kab. Seluma
+res_city_00121,base.state_id_be,Kab. Muko Muko
+res_city_00122,base.state_id_be,Kab. Lebong
+res_city_00123,base.state_id_be,Kab. Kepahiang
+res_city_00124,base.state_id_be,Kab. Bengkulu Tengah
+res_city_00125,base.state_id_be,Kota Bengkulu
+res_city_00126,base.state_id_la,Kab. Lampung Selatan
+res_city_00127,base.state_id_la,Kab. Lampung Tengah
+res_city_00128,base.state_id_la,Kab. Lampung Utara
+res_city_00129,base.state_id_la,Kab. Lampung Barat
+res_city_00130,base.state_id_la,Kab. Tulang Bawang
+res_city_00131,base.state_id_la,Kab. Tanggamus
+res_city_00132,base.state_id_la,Kab. Lampung Timur
+res_city_00133,base.state_id_la,Kab. Way Kanan
+res_city_00134,base.state_id_la,Kab. Pesawaran
+res_city_00135,base.state_id_la,Kab. Pringsewu
+res_city_00136,base.state_id_la,Kab. Mesuji
+res_city_00137,base.state_id_la,Kab. Tulang Bawang Barat
+res_city_00138,base.state_id_la,Kab. Pesisir Barat
+res_city_00139,base.state_id_la,Kota Bandar Lampung
+res_city_00140,base.state_id_la,Kota Metro
+res_city_00141,base.state_id_bb,Kab. Bangka
+res_city_00142,base.state_id_bb,Kab. Belitung
+res_city_00143,base.state_id_bb,Kab. Bangka Selatan
+res_city_00144,base.state_id_bb,Kab. Bangka Tengah
+res_city_00145,base.state_id_bb,Kab. Bangka Barat
+res_city_00146,base.state_id_bb,Kab. Belitung Timur
+res_city_00147,base.state_id_bb,Kota Pangkal Pinang
+res_city_00148,base.state_id_kr,Kab. Bintan
+res_city_00149,base.state_id_kr,Kab. Karimun
+res_city_00150,base.state_id_kr,Kab. Natuna
+res_city_00151,base.state_id_kr,Kab. Lingga
+res_city_00152,base.state_id_kr,Kab. Kepulauan Anambas
+res_city_00153,base.state_id_kr,Kota Batam
+res_city_00154,base.state_id_kr,Kota Tanjung Pinang
+res_city_00155,base.state_id_jk,Kab. Adm. Kep. Seribu
+res_city_00156,base.state_id_jk,Kota Adm. Jakarta Pusat
+res_city_00157,base.state_id_jk,Kota Adm. Jakarta Utara
+res_city_00158,base.state_id_jk,Kota Adm. Jakarta Barat
+res_city_00159,base.state_id_jk,Kota Adm. Jakarta Selatan
+res_city_00160,base.state_id_jk,Kota Adm. Jakarta Timur
+res_city_00161,base.state_id_jb,Kab. Bogor
+res_city_00162,base.state_id_jb,Kab. Sukabumi
+res_city_00163,base.state_id_jb,Kab. Cianjur
+res_city_00164,base.state_id_jb,Kab. Bandung
+res_city_00165,base.state_id_jb,Kab. Garut
+res_city_00166,base.state_id_jb,Kab. Tasikmalaya
+res_city_00167,base.state_id_jb,Kab. Ciamis
+res_city_00168,base.state_id_jb,Kab. Kuningan
+res_city_00169,base.state_id_jb,Kab. Cirebon
+res_city_00170,base.state_id_jb,Kab. Majalengka
+res_city_00171,base.state_id_jb,Kab. Sumedang
+res_city_00172,base.state_id_jb,Kab. Indramayu
+res_city_00173,base.state_id_jb,Kab. Subang
+res_city_00174,base.state_id_jb,Kab. Purwakarta
+res_city_00175,base.state_id_jb,Kab. Karawang
+res_city_00176,base.state_id_jb,Kab. Bekasi
+res_city_00177,base.state_id_jb,Kab. Bandung Barat
+res_city_00178,base.state_id_jb,Kab. Pangandaran
+res_city_00179,base.state_id_jb,Kota Bogor
+res_city_00180,base.state_id_jb,Kota Sukabumi
+res_city_00181,base.state_id_jb,Kota Bandung
+res_city_00182,base.state_id_jb,Kota Cirebon
+res_city_00183,base.state_id_jb,Kota Bekasi
+res_city_00184,base.state_id_jb,Kota Depok
+res_city_00185,base.state_id_jb,Kota Cimahi
+res_city_00186,base.state_id_jb,Kota Tasikmalaya
+res_city_00187,base.state_id_jb,Kota Banjar
+res_city_00188,base.state_id_jt,Kab. Cilacap
+res_city_00189,base.state_id_jt,Kab. Banyumas
+res_city_00190,base.state_id_jt,Kab. Purbalingga
+res_city_00191,base.state_id_jt,Kab. Banjarnegara
+res_city_00192,base.state_id_jt,Kab. Kebumen
+res_city_00193,base.state_id_jt,Kab. Purworejo
+res_city_00194,base.state_id_jt,Kab. Wonosobo
+res_city_00195,base.state_id_jt,Kab. Magelang
+res_city_00196,base.state_id_jt,Kab. Boyolali
+res_city_00197,base.state_id_jt,Kab. Klaten
+res_city_00198,base.state_id_jt,Kab. Sukoharjo
+res_city_00199,base.state_id_jt,Kab. Wonogiri
+res_city_00200,base.state_id_jt,Kab. Karanganyar
+res_city_00201,base.state_id_jt,Kab. Sragen
+res_city_00202,base.state_id_jt,Kab. Grobogan
+res_city_00203,base.state_id_jt,Kab. Blora
+res_city_00204,base.state_id_jt,Kab. Rembang
+res_city_00205,base.state_id_jt,Kab. Pati
+res_city_00206,base.state_id_jt,Kab. Kudus
+res_city_00207,base.state_id_jt,Kab. Jepara
+res_city_00208,base.state_id_jt,Kab. Demak
+res_city_00209,base.state_id_jt,Kab. Semarang
+res_city_00210,base.state_id_jt,Kab. Temanggung
+res_city_00211,base.state_id_jt,Kab. Kendal
+res_city_00212,base.state_id_jt,Kab. Batang
+res_city_00213,base.state_id_jt,Kab. Pekalongan
+res_city_00214,base.state_id_jt,Kab. Pemalang
+res_city_00215,base.state_id_jt,Kab. Tegal
+res_city_00216,base.state_id_jt,Kab. Brebes
+res_city_00217,base.state_id_jt,Kota Magelang
+res_city_00218,base.state_id_jt,Kota Surakarta
+res_city_00219,base.state_id_jt,Kota Salatiga
+res_city_00220,base.state_id_jt,Kota Semarang
+res_city_00221,base.state_id_jt,Kota Pekalongan
+res_city_00222,base.state_id_jt,Kota Tegal
+res_city_00223,base.state_id_yo,Kab. Kulon Progo
+res_city_00224,base.state_id_yo,Kab. Bantul
+res_city_00225,base.state_id_yo,Kab. Gunungkidul
+res_city_00226,base.state_id_yo,Kab. Sleman
+res_city_00227,base.state_id_yo,Kota Yogyakarta
+res_city_00228,base.state_id_ji,Kab. Pacitan
+res_city_00229,base.state_id_ji,Kab. Ponorogo
+res_city_00230,base.state_id_ji,Kab. Trenggalek
+res_city_00231,base.state_id_ji,Kab. Tulungagung
+res_city_00232,base.state_id_ji,Kab. Blitar
+res_city_00233,base.state_id_ji,Kab. Kediri
+res_city_00234,base.state_id_ji,Kab. Malang
+res_city_00235,base.state_id_ji,Kab. Lumajang
+res_city_00236,base.state_id_ji,Kab. Jember
+res_city_00237,base.state_id_ji,Kab. Banyuwangi
+res_city_00238,base.state_id_ji,Kab. Bondowoso
+res_city_00239,base.state_id_ji,Kab. Situbondo
+res_city_00240,base.state_id_ji,Kab. Probolinggo
+res_city_00241,base.state_id_ji,Kab. Pasuruan
+res_city_00242,base.state_id_ji,Kab. Sidoarjo
+res_city_00243,base.state_id_ji,Kab. Mojokerto
+res_city_00244,base.state_id_ji,Kab. Jombang
+res_city_00245,base.state_id_ji,Kab. Nganjuk
+res_city_00246,base.state_id_ji,Kab. Madiun
+res_city_00247,base.state_id_ji,Kab. Magetan
+res_city_00248,base.state_id_ji,Kab. Ngawi
+res_city_00249,base.state_id_ji,Kab. Bojonegoro
+res_city_00250,base.state_id_ji,Kab. Tuban
+res_city_00251,base.state_id_ji,Kab. Lamongan
+res_city_00252,base.state_id_ji,Kab. Gresik
+res_city_00253,base.state_id_ji,Kab. Bangkalan
+res_city_00254,base.state_id_ji,Kab. Sampang
+res_city_00255,base.state_id_ji,Kab. Pamekasan
+res_city_00256,base.state_id_ji,Kab. Sumenep
+res_city_00257,base.state_id_ji,Kota Kediri
+res_city_00258,base.state_id_ji,Kota Blitar
+res_city_00259,base.state_id_ji,Kota Malang
+res_city_00260,base.state_id_ji,Kota Probolinggo
+res_city_00261,base.state_id_ji,Kota Pasuruan
+res_city_00262,base.state_id_ji,Kota Mojokerto
+res_city_00263,base.state_id_ji,Kota Madiun
+res_city_00264,base.state_id_ji,Kota Surabaya
+res_city_00265,base.state_id_ji,Kota Batu
+res_city_00266,base.state_id_bt,Kab. Pandeglang
+res_city_00267,base.state_id_bt,Kab. Lebak
+res_city_00268,base.state_id_bt,Kab. Tangerang
+res_city_00269,base.state_id_bt,Kab. Serang
+res_city_00270,base.state_id_bt,Kota Tangerang
+res_city_00271,base.state_id_bt,Kota Cilegon
+res_city_00272,base.state_id_bt,Kota Serang
+res_city_00273,base.state_id_bt,Kota Tangerang Selatan
+res_city_00274,base.state_id_ba,Kab. Jembrana
+res_city_00275,base.state_id_ba,Kab. Tabanan
+res_city_00276,base.state_id_ba,Kab. Badung
+res_city_00277,base.state_id_ba,Kab. Gianyar
+res_city_00278,base.state_id_ba,Kab. Klungkung
+res_city_00279,base.state_id_ba,Kab. Bangli
+res_city_00280,base.state_id_ba,Kab. Karangasem
+res_city_00281,base.state_id_ba,Kab. Buleleng
+res_city_00282,base.state_id_ba,Kota Denpasar
+res_city_00283,base.state_id_nb,Kab. Lombok Barat
+res_city_00284,base.state_id_nb,Kab. Lombok Tengah
+res_city_00285,base.state_id_nb,Kab. Lombok Timur
+res_city_00286,base.state_id_nb,Kab. Sumbawa
+res_city_00287,base.state_id_nb,Kab. Dompu
+res_city_00288,base.state_id_nb,Kab. Bima
+res_city_00289,base.state_id_nb,Kab. Sumbawa Barat
+res_city_00290,base.state_id_nb,Kab. Lombok Utara
+res_city_00291,base.state_id_nb,Kota Mataram
+res_city_00292,base.state_id_nb,Kota Bima
+res_city_00293,base.state_id_nt,Kab. Kupang
+res_city_00294,base.state_id_nt,Kab Timor Tengah Selatan
+res_city_00295,base.state_id_nt,Kab. Timor Tengah Utara
+res_city_00296,base.state_id_nt,Kab. Belu
+res_city_00297,base.state_id_nt,Kab. Alor
+res_city_00298,base.state_id_nt,Kab. Flores Timur
+res_city_00299,base.state_id_nt,Kab. Sikka
+res_city_00300,base.state_id_nt,Kab. Ende
+res_city_00301,base.state_id_nt,Kab. Ngada
+res_city_00302,base.state_id_nt,Kab. Manggarai
+res_city_00303,base.state_id_nt,Kab. Sumba Timur
+res_city_00304,base.state_id_nt,Kab. Sumba Barat
+res_city_00305,base.state_id_nt,Kab. Lembata
+res_city_00306,base.state_id_nt,Kab. Rote Ndao
+res_city_00307,base.state_id_nt,Kab. Manggarai Barat
+res_city_00308,base.state_id_nt,Kab. Nagekeo
+res_city_00309,base.state_id_nt,Kab. Sumba Tengah
+res_city_00310,base.state_id_nt,Kab. Sumba Barat Daya
+res_city_00311,base.state_id_nt,Kab. Manggarai Timur
+res_city_00312,base.state_id_nt,Kab. Sabu Raijua
+res_city_00313,base.state_id_nt,Kab. Malaka
+res_city_00314,base.state_id_nt,Kota Kupang
+res_city_00315,base.state_id_kb,Kab. Sambas
+res_city_00316,base.state_id_kb,Kab. Mempawah
+res_city_00317,base.state_id_kb,Kab. Sanggau
+res_city_00318,base.state_id_kb,Kab. Ketapang
+res_city_00319,base.state_id_kb,Kab. Sintang
+res_city_00320,base.state_id_kb,Kab. Kapuas Hulu
+res_city_00321,base.state_id_kb,Kab. Bengkayang
+res_city_00322,base.state_id_kb,Kab. Landak
+res_city_00323,base.state_id_kb,Kab. Sekadau
+res_city_00324,base.state_id_kb,Kab. Melawi
+res_city_00325,base.state_id_kb,Kab. Kayong Utara
+res_city_00326,base.state_id_kb,Kab. Kubu Raya
+res_city_00327,base.state_id_kb,Kota Pontianak
+res_city_00328,base.state_id_kb,Kota Singkawang
+res_city_00329,base.state_id_kt,Kab. Kotawaringin Barat
+res_city_00330,base.state_id_kt,Kab. Kotawaringin Timur
+res_city_00331,base.state_id_kt,Kab. Kapuas
+res_city_00332,base.state_id_kt,Kab. Barito Selatan
+res_city_00333,base.state_id_kt,Kab. Barito Utara
+res_city_00334,base.state_id_kt,Kab. Katingan
+res_city_00335,base.state_id_kt,Kab. Seruyan
+res_city_00336,base.state_id_kt,Kab. Sukamara
+res_city_00337,base.state_id_kt,Kab. Lamandau
+res_city_00338,base.state_id_kt,Kab. Gunung Mas
+res_city_00339,base.state_id_kt,Kab. Pulang Pisau
+res_city_00340,base.state_id_kt,Kab. Murung Raya
+res_city_00341,base.state_id_kt,Kab. Barito Timur
+res_city_00342,base.state_id_kt,Kota Palangkaraya
+res_city_00343,base.state_id_ks,Kab. Tanah Laut
+res_city_00344,base.state_id_ks,Kab. Kotabaru
+res_city_00345,base.state_id_ks,Kab. Banjar
+res_city_00346,base.state_id_ks,Kab. Barito Kuala
+res_city_00347,base.state_id_ks,Kab. Tapin
+res_city_00348,base.state_id_ks,Kab. Hulu Sungai Selatan
+res_city_00349,base.state_id_ks,Kab. Hulu Sungai Tengah
+res_city_00350,base.state_id_ks,Kab. Hulu Sungai Utara
+res_city_00351,base.state_id_ks,Kab. Tabalong
+res_city_00352,base.state_id_ks,Kab. Tanah Bumbu
+res_city_00353,base.state_id_ks,Kab. Balangan
+res_city_00354,base.state_id_ks,Kota Banjarmasin
+res_city_00355,base.state_id_ks,Kota Banjarbaru
+res_city_00356,base.state_id_ki,Kab. Paser
+res_city_00357,base.state_id_ki,Kab. Kutai Kartanegara
+res_city_00358,base.state_id_ki,Kab. Berau
+res_city_00359,base.state_id_ki,Kab. Kutai Barat
+res_city_00360,base.state_id_ki,Kab. Kutai Timur
+res_city_00361,base.state_id_ki,Kab. Penajam Paser Utara
+res_city_00362,base.state_id_ki,Kab. Mahakam Ulu
+res_city_00363,base.state_id_ki,Kota Balikpapan
+res_city_00364,base.state_id_ki,Kota Samarinda
+res_city_00365,base.state_id_ki,Kota Bontang
+res_city_00366,base.state_id_ku,Kab. Bulungan
+res_city_00367,base.state_id_ku,Kab. Malinau
+res_city_00368,base.state_id_ku,Kab. Nunukan
+res_city_00369,base.state_id_ku,Kab. Tana Tidung
+res_city_00370,base.state_id_ku,Kota Tarakan
+res_city_00371,base.state_id_sa,Kab. Bolaang Mongondow
+res_city_00372,base.state_id_sa,Kab. Minahasa
+res_city_00373,base.state_id_sa,Kab. Kepulauan Sangihe
+res_city_00374,base.state_id_sa,Kab. Kepulauan Talaud
+res_city_00375,base.state_id_sa,Kab. Minahasa Selatan
+res_city_00376,base.state_id_sa,Kab. Minahasa Utara
+res_city_00377,base.state_id_sa,Kab. Minahasa Tenggara
+res_city_00378,base.state_id_sa,Kab. Bolaang Mongondow Utara
+res_city_00379,base.state_id_sa,Kab. Kep. Siau Tagulandang Biaro
+res_city_00380,base.state_id_sa,Kab. Bolaang Mongondow Timur
+res_city_00381,base.state_id_sa,Kab. Bolaang Mongondow Selatan
+res_city_00382,base.state_id_sa,Kota Manado
+res_city_00383,base.state_id_sa,Kota Bitung
+res_city_00384,base.state_id_sa,Kota Tomohon
+res_city_00385,base.state_id_sa,Kota Kotamobagu
+res_city_00386,base.state_id_st,Kab. Banggai
+res_city_00387,base.state_id_st,Kab. Poso
+res_city_00388,base.state_id_st,Kab. Donggala
+res_city_00389,base.state_id_st,Kab. Toli Toli
+res_city_00390,base.state_id_st,Kab. Buol
+res_city_00391,base.state_id_st,Kab. Morowali
+res_city_00392,base.state_id_st,Kab. Banggai Kepulauan
+res_city_00393,base.state_id_st,Kab. Parigi Moutong
+res_city_00394,base.state_id_st,Kab. Tojo Una Una
+res_city_00395,base.state_id_st,Kab. Sigi
+res_city_00396,base.state_id_st,Kab. Banggai Laut
+res_city_00397,base.state_id_st,Kab. Morowali Utara
+res_city_00398,base.state_id_st,Kota Palu
+res_city_00399,base.state_id_sn,Kab. Kepulauan Selayar
+res_city_00400,base.state_id_sn,Kab. Bulukumba
+res_city_00401,base.state_id_sn,Kab. Bantaeng
+res_city_00402,base.state_id_sn,Kab. Jeneponto
+res_city_00403,base.state_id_sn,Kab. Takalar
+res_city_00404,base.state_id_sn,Kab. Gowa
+res_city_00405,base.state_id_sn,Kab. Sinjai
+res_city_00406,base.state_id_sn,Kab. Bone
+res_city_00407,base.state_id_sn,Kab. Maros
+res_city_00408,base.state_id_sn,Kab. Pangkajene Kepulauan
+res_city_00409,base.state_id_sn,Kab. Barru
+res_city_00410,base.state_id_sn,Kab. Soppeng
+res_city_00411,base.state_id_sn,Kab. Wajo
+res_city_00412,base.state_id_sn,Kab. Sidenreng Rappang
+res_city_00413,base.state_id_sn,Kab. Pinrang
+res_city_00414,base.state_id_sn,Kab. Enrekang
+res_city_00415,base.state_id_sn,Kab. Luwu
+res_city_00416,base.state_id_sn,Kab. Tana Toraja
+res_city_00417,base.state_id_sn,Kab. Luwu Utara
+res_city_00418,base.state_id_sn,Kab. Luwu Timur
+res_city_00419,base.state_id_sn,Kab. Toraja Utara
+res_city_00420,base.state_id_sn,Kota Makassar
+res_city_00421,base.state_id_sn,Kota Pare Pare
+res_city_00422,base.state_id_sn,Kota Palopo
+res_city_00423,base.state_id_sg,Kab. Kolaka
+res_city_00424,base.state_id_sg,Kab. Konawe
+res_city_00425,base.state_id_sg,Kab. Muna
+res_city_00426,base.state_id_sg,Kab. Buton
+res_city_00427,base.state_id_sg,Kab. Konawe Selatan
+res_city_00428,base.state_id_sg,Kab. Bombana
+res_city_00429,base.state_id_sg,Kab. Wakatobi
+res_city_00430,base.state_id_sg,Kab. Kolaka Utara
+res_city_00431,base.state_id_sg,Kab. Konawe Utara
+res_city_00432,base.state_id_sg,Kab. Buton Utara
+res_city_00433,base.state_id_sg,Kab. Kolaka Timur
+res_city_00434,base.state_id_sg,Kab. Konawe Kepulauan
+res_city_00435,base.state_id_sg,Kab. Muna Barat
+res_city_00436,base.state_id_sg,Kab. Buton Tengah
+res_city_00437,base.state_id_sg,Kab. Buton Selatan
+res_city_00438,base.state_id_sg,Kota Kendari
+res_city_00439,base.state_id_sg,Kota Bau Bau
+res_city_00440,base.state_id_go,Kab. Gorontalo
+res_city_00441,base.state_id_go,Kab. Boalemo
+res_city_00442,base.state_id_go,Kab. Bone Bolango
+res_city_00443,base.state_id_go,Kab. Pohuwato
+res_city_00444,base.state_id_go,Kab. Gorontalo Utara
+res_city_00445,base.state_id_go,Kota Gorontalo
+res_city_00446,base.state_id_sr,Kab. Pasangkayu
+res_city_00447,base.state_id_sr,Kab. Mamuju
+res_city_00448,base.state_id_sr,Kab. Mamasa
+res_city_00449,base.state_id_sr,Kab. Polewali Mandar
+res_city_00450,base.state_id_sr,Kab. Majene
+res_city_00451,base.state_id_sr,Kab. Mamuju Tengah
+res_city_00452,base.state_id_ma,Kab. Maluku Tengah
+res_city_00453,base.state_id_ma,Kab. Maluku Tenggara
+res_city_00454,base.state_id_ma,Kab. Kepulauan Tanimbar
+res_city_00455,base.state_id_ma,Kab. Buru
+res_city_00456,base.state_id_ma,Kab. Seram Bagian Timur
+res_city_00457,base.state_id_ma,Kab. Seram Bagian Barat
+res_city_00458,base.state_id_ma,Kab. Kepulauan Aru
+res_city_00459,base.state_id_ma,Kab. Maluku Barat Daya
+res_city_00460,base.state_id_ma,Kab. Buru Selatan
+res_city_00461,base.state_id_ma,Kota Ambon
+res_city_00462,base.state_id_ma,Kota Tual
+res_city_00463,base.state_id_mu,Kab. Halmahera Barat
+res_city_00464,base.state_id_mu,Kab. Halmahera Tengah
+res_city_00465,base.state_id_mu,Kab. Halmahera Utara
+res_city_00466,base.state_id_mu,Kab. Halmahera Selatan
+res_city_00467,base.state_id_mu,Kab. Kepulauan Sula
+res_city_00468,base.state_id_mu,Kab. Halmahera Timur
+res_city_00469,base.state_id_mu,Kab. Pulau Morotai
+res_city_00470,base.state_id_mu,Kab. Pulau Taliabu
+res_city_00471,base.state_id_mu,Kota Ternate
+res_city_00472,base.state_id_mu,Kota Tidore Kepulauan
+res_city_00473,base.state_id_pa,Kab. Jayapura
+res_city_00474,base.state_id_pa,Kab. Kepulauan Yapen
+res_city_00475,base.state_id_pa,Kab. Biak Numfor
+res_city_00476,base.state_id_pa,Kab. Sarmi
+res_city_00477,base.state_id_pa,Kab. Keerom
+res_city_00478,base.state_id_pa,Kab. Waropen
+res_city_00479,base.state_id_pa,Kab. Supiori
+res_city_00480,base.state_id_pa,Kab. Mamberamo Raya
+res_city_00481,base.state_id_pa,Kota Jayapura
+res_city_00482,base.state_id_pb,Kab. Sorong
+res_city_00483,base.state_id_pb,Kab. Manokwari
+res_city_00484,base.state_id_pb,Kab. Fak Fak
+res_city_00485,base.state_id_pb,Kab. Sorong Selatan
+res_city_00486,base.state_id_pb,Kab. Raja Ampat
+res_city_00487,base.state_id_pb,Kab. Teluk Bintuni
+res_city_00488,base.state_id_pb,Kab. Teluk Wondama
+res_city_00489,base.state_id_pb,Kab. Kaimana
+res_city_00490,base.state_id_pb,Kab. Tambrauw
+res_city_00491,base.state_id_pb,Kab. Maybrat
+res_city_00492,base.state_id_pb,Kab. Manokwari Selatan
+res_city_00493,base.state_id_pb,Kab. Pegunungan Arfak
+res_city_00494,base.state_id_pb,Kota Sorong
+res_city_00495,base.state_id_ps,Kab. Merauke
+res_city_00496,base.state_id_ps,Kab. Boven Digoel
+res_city_00497,base.state_id_ps,Kab. Mappi
+res_city_00498,base.state_id_ps,Kab. Asmat
+res_city_00499,base.state_id_pt,Kab. Nabire
+res_city_00500,base.state_id_pt,Kab. Puncak Jaya
+res_city_00501,base.state_id_pt,Kab. Paniai
+res_city_00502,base.state_id_pt,Kab. Mimika
+res_city_00503,base.state_id_pt,Kab. Puncak
+res_city_00504,base.state_id_pt,Kab. Dogiyai
+res_city_00505,base.state_id_pt,Kab. Intan Jaya
+res_city_00506,base.state_id_pt,Kab. Deiyai
+res_city_00507,base.state_id_pe,Kab. Jayawijaya
+res_city_00508,base.state_id_pe,Kab. Pegunungan Bintang
+res_city_00509,base.state_id_pe,Kab. Yahukimo
+res_city_00510,base.state_id_pe,Kab. Tolikara
+res_city_00511,base.state_id_pe,Kab. Mamberamo Tengah
+res_city_00512,base.state_id_pe,Kab. Yalimo
+res_city_00513,base.state_id_pe,Kab. Lanny Jaya
+res_city_00514,base.state_id_pe,Kab. Nduga

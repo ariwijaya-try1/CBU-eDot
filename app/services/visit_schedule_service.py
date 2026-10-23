@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.clients.odoo_client import OdooClient
 from app.core.exceptions import NotFoundError
+from app.core.salesman_slots import SLOTS_BY_NAME
 
 CUSTOMER_EXTERNAL_CODE_PREFIX = "ODOO-PARTNER-"
 VISIT_MODEL = "res.partner"
@@ -173,3 +174,69 @@ class VisitScheduleService:
         if freq != expected_freq:
             return f"pasangan tidak cocok: {cycle} harus {expected_freq}, tercatat {freq}"
         return None
+
+    def get_outlet_schedule(self, partner_ids: list[int], date_from: date | None = None, weeks: int = 4) -> dict:
+        """
+        16 Oktober 2026 -- jadwal kunjungan OUTLET TERTENTU (by id partner)
+        dalam N minggu ke depan, dihitung dari visit cycle Odoo (aturan sama
+        get_visits_on). Read-only. Sales = Salesperson Odoo (`user_id`) +
+        akun eDot dari tabel app/core/salesman_slots.py (kalau slotnya ada).
+        """
+        date_from = date_from or datetime.now(WITA).date()
+        date_to = date_from + timedelta(days=weeks * 7 - 1)
+        selections = {f: self._selection_map(f) for f in VISIT_FIELDS}
+        partners = self.odoo.get_customers_with_visit_schedule(VISIT_FIELDS, partner_ids=partner_ids)
+
+        outlets = []
+        for p in partners:
+            cycle = _normalize(p.get(VISIT_CYCLE_FIELD), selections[VISIT_CYCLE_FIELD])
+            day = _normalize(p.get(VISIT_DAY_FIELD), selections[VISIT_DAY_FIELD])
+            freq = _normalize(p.get(VISIT_FREQUENCY_FIELD), selections[VISIT_FREQUENCY_FIELD])
+            salesperson = p["user_id"][1] if p.get("user_id") else None
+            slot = SLOTS_BY_NAME.get(salesperson) if salesperson else None
+            row = {
+                "customer_external_code": f"{CUSTOMER_EXTERNAL_CODE_PREFIX}{p['id']}",
+                "customer_name": p.get("name"),
+                "company": p["company_id"][1] if p.get("company_id") else None,
+                "salesperson": salesperson,
+                # None = slot belum ada di tabel mapping -> tidak dikirim ke eDot
+                "esuite_username": slot["esuite_username"] if slot else None,
+                "sales_person_name": slot["person"] if slot else None,
+                "visit_cycle": cycle or None,
+                "visit_day": day or None,
+                "visit_frequency": freq or None,
+            }
+            reason = self._invalid_reason(cycle, day, freq)
+            if reason:
+                outlets.append({**row, "valid": False, "reason": reason, "next_visit": None, "visit_dates": []})
+                continue
+
+            weeks_rule, _ = CYCLE_RULES[cycle]
+            dates = []
+            d = date_from
+            while d <= date_to:
+                if d.weekday() == DAY_NAMES[day] and (weeks_rule is None or week_of_month(d)[2] in weeks_rule):
+                    y, m, w = week_of_month(d)
+                    dates.append({"date": d.isoformat(), "day": DAY_LABELS[d.weekday()], "week": f"minggu ke-{w} {y}-{m:02d}"})
+                d += timedelta(days=1)
+            outlets.append({
+                **row,
+                "valid": True,
+                "next_visit": dates[0]["date"] if dates else None,
+                "visit_dates": dates,
+            })
+
+        found = {p["id"] for p in partners}
+        not_found = [
+            {"customer_external_code": f"{CUSTOMER_EXTERNAL_CODE_PREFIX}{i}",
+             "reason": "bukan customer aktif / tidak punya data visit (mis. tim FS)"}
+            for i in partner_ids if i not in found
+        ]
+        return {
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "outlet_count": len(outlets),
+            "outlets": outlets,
+            "not_found": not_found,
+            "note": "Jadwal hitungan dari visit cycle Odoo, BUKAN data call plan yang sudah masuk eSuite.",
+        }

@@ -745,6 +745,22 @@ class OdooClient:
 
         return result
 
+    def get_partner_basic(self, partner_id: int) -> dict | None:
+        """
+        🆕 23 Oktober 2026 -- baca 1 res.partner (name, company_id,
+        property_product_pricelist) utk GET /compare/pricelist. Additif,
+        tidak dipakai proses sync. property_product_pricelist di sini dibaca
+        TANPA context company -- caller pakai get_pricelist_by_company() kalau
+        partner punya company_id.
+        """
+        records = self._execute(
+            "res.partner",
+            "read",
+            [[partner_id]],
+            {"fields": ["id", "name", "company_id", "property_product_pricelist"]},
+        )
+        return records[0] if records else None
+
     # ------------------------------------------------------------------
     # GET / inspeksi mentah (16 Agustus 2026) -- dipakai
     # app/api/routes/odoo_get.py (grup Swagger "odoo - Get"), TUJUANNYA
@@ -1574,6 +1590,7 @@ class OdooClient:
         fields: list[str],
         salesperson_ids: list[int] | None = None,
         company_id: int | None = None,
+        partner_ids: list[int] | None = None,
     ):
         """
         Customer (customer_rank > 0 & active, filter sama /sync/customers)
@@ -1593,6 +1610,8 @@ class OdooClient:
             conditions.append(("user_id", "in", salesperson_ids))
         if company_id is not None:
             conditions.append(("company_id", "=", company_id or False))
+        if partner_ids:  # 16 Oktober 2026 -- GET /odoo/visit-schedule (outlet tertentu)
+            conditions.append(("id", "in", partner_ids))
 
         return self._execute(
             "res.partner",

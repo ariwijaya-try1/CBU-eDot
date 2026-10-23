@@ -1,0 +1,39 @@
+id,name,code,country_id/id
+base.state_id_ac,Aceh,AC,base.id
+base.state_id_ba,Bali,BA,base.id
+base.state_id_bb,Bangka Belitung,BB,base.id
+base.state_id_be,Bengkulu,BE,base.id
+base.state_id_bt,Banten,BT,base.id
+base.state_id_go,Gorontalo,GO,base.id
+base.state_id_ja,Jambi,JA,base.id
+base.state_id_jb,Jawa Barat,JB,base.id
+base.state_id_ji,Jawa Timur,JI,base.id
+base.state_id_jk,Jakarta,JK,base.id
+base.state_id_jt,Jawa Tengah,JT,base.id
+base.state_id_kb,Kalimantan Barat,KB,base.id
+base.state_id_ki,Kalimantan Timur,KI,base.id
+base.state_id_kr,Kepulauan Riau,KR,base.id
+base.state_id_ks,Kalimantan Selatan,KS,base.id
+base.state_id_kt,Kalimantan Tengah,KT,base.id
+base.state_id_ku,Kalimantan Utara,KU,base.id
+base.state_id_la,Lampung,LA,base.id
+base.state_id_ma,Maluku,MA,base.id
+base.state_id_mu,Maluku Utara,MU,base.id
+base.state_id_nb,Nusa Tenggara Barat,NB,base.id
+base.state_id_nt,Nusa Tenggara Timur,NT,base.id
+base.state_id_pa,Papua,PA,base.id
+base.state_id_pb,Papua Barat,PB,base.id
+base.state_id_pd,Papua Barat Daya,PD,base.id
+base.state_id_pe,Papua Pegunungan,PE,base.id
+base.state_id_ps,Papua Selatan,PS,base.id
+base.state_id_pt,Papua Tengah,PT,base.id
+base.state_id_ri,Riau,RI,base.id
+base.state_id_sa,Sulawesi Utara,SA,base.id
+base.state_id_sb,Sumatra Barat,SB,base.id
+base.state_id_sg,Sulawesi Tenggara,SG,base.id
+base.state_id_sn,Sulawesi Selatan,SN,base.id
+base.state_id_sr,Sulawesi Barat,SR,base.id
+base.state_id_ss,Sumatra Selatan,SS,base.id
+base.state_id_st,Sulawesi Tengah,ST,base.id
+base.state_id_su,Sumatra Utara,SU,base.id
+base.state_id_yo,Yogyakarta,YO,base.id

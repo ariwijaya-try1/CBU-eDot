@@ -1,0 +1,8 @@
+timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_count,status,actor,note
+2026-09-05T03:52:05.935704+00:00,pricelist,upsert,,1,0,1,success,,
+2026-09-05T03:52:05.963538+00:00,pricelist,upsert,,1,0,1,success,,
+2026-09-07T06:29:58.094874+00:00,order_history,import,250,250,0,,success,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match), 3 batch @ max 100 order/batch"
+2026-09-07T06:29:58.108285+00:00,order_history,import,45,45,0,,success,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match), 3 batch @ max 20 order/batch"
+2026-09-07T06:29:58.127715+00:00,order_history,import,150,150,0,,success,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match), 2 batch @ max 100 order/batch"
+2026-09-07T06:29:58.190587+00:00,order_history,import,250,150,100,,partial,,"orders/import v1 -- 1 order terakhir/outlet, invoice_status in ['to invoice', 'invoiced'], 0 customer di-skip lokal (tidak ada order match), 3 batch @ max 100 order/batch"
+2026-09-07T08:44:35.623775+00:00,order_history,import,3,4,0,,success,,"orders/import -- semua order/outlet (revisi scope 7 Sep 2026), invoice_status in ['to invoice', 'invoiced'], lookback 50, 1 customer di-skip lokal (tidak ada order match), 1 batch @ max 100 order/batch"

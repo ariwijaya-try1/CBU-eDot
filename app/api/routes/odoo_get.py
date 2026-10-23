@@ -702,3 +702,36 @@ def get_odoo_visit_today(
     return VisitScheduleService().get_visits_on(
         visit_date=visit_date, salesperson_ids=ids, company_id=company_id
     )
+
+
+@router.get("/odoo/visit-schedule")
+def get_odoo_visit_schedule(
+    external_codes: str = Query(
+        ...,
+        description="WAJIB -- outlet, format 'ODOO-PARTNER-{id}', pisah koma (maks 50).",
+    ),
+    date_from: date | None = Query(default=None, description="OPSIONAL -- mulai tanggal, YYYY-MM-DD. Kosong = hari ini (WITA)."),
+    weeks: int = Query(default=4, ge=1, le=12, description="OPSIONAL -- berapa minggu ke depan (default 4, maks 12)."),
+):
+    """
+    Kapan outlet dikunjungi & oleh sales siapa -- 16 Oktober 2026. Read-only.
+
+    Dihitung dari visit cycle Odoo (`x_studio_visit_cycle` / `_day` /
+    `_frequency`) + Salesperson (`user_id`), aturan minggu sama dgn
+    GET /odoo/visit-today & POST /sync/call-plan. Akun eDot dari tabel
+    `app/core/salesman_slots.py` (`esuite_username` null = slot belum di-mapping).
+    Data visit tidak valid -> `valid: false` + `reason`.
+    Ini jadwal HITUNGAN, bukan call plan yang tersimpan di eSuite.
+    """
+    prefix = "ODOO-PARTNER-"
+    codes = [c.strip() for c in external_codes.split(",") if c.strip()]
+    bad = [c for c in codes if not (c.startswith(prefix) and c[len(prefix):].isdigit())]
+    if not codes or bad:
+        raise ValidationError(
+            f"external_codes harus format '{prefix}{{id}}', pisah koma",
+            details={"invalid": bad or external_codes},
+        )
+    if len(codes) > 50:
+        raise ValidationError("Maksimal 50 outlet per request", details={"count": len(codes)})
+    ids = list(dict.fromkeys(int(c[len(prefix):]) for c in codes))
+    return VisitScheduleService().get_outlet_schedule(partner_ids=ids, date_from=date_from, weeks=weeks)
