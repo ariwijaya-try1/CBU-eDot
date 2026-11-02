@@ -181,3 +181,4 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-10-21T01:25:07.713780+00:00,customer,upsert,3608,3608,0,4,success,,
 2026-10-21T01:38:26.376630+00:00,call_plan,upsert,1,1,0,,success,,2026-10-21..2026-10-21 slots=[SALES] BAL MT02
 2026-10-21T02:25:12.712608+00:00,call_plan,upsert,2,2,0,,success,,2026-10-21..2026-10-21 slots=[SALES] BAL MT02
+2026-10-24T06:12:15.006846+00:00,pricelist,upsert,,1,0,1,success,,

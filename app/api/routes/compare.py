@@ -19,6 +19,10 @@ def compare_pricelist(
         ),
     ),
     product_limit: int = Query(default=5, ge=1, le=20, description="Maks produk Odoo yang cocok dgn nama."),
+    diagnostic: bool = Query(
+        default=False,
+        description="false (default) = ringkas: pricelist & harga Odoo vs eDot + keterangan. true = output diagnostik lengkap.",
+    ),
 ):
     """
     READ-ONLY. Bandingkan harga produk di pricelist Odoo vs pricelist eSuite.
@@ -28,4 +32,6 @@ def compare_pricelist(
     (pricelist eSuite lain yang memuat produk ini).
     Catatan: scan SEMUA pricelist eSuite per panggilan -> bisa beberapa detik.
     """
-    return service.compare(product_name=product_name, customer=customer, product_limit=product_limit)
+    return service.compare(
+        product_name=product_name, customer=customer, product_limit=product_limit, diagnostic=diagnostic
+    )

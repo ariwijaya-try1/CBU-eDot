@@ -1,6 +1,6 @@
 from app.clients.esuite_client import EsuiteClient
 from app.clients.odoo_client import OdooClient
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import AppError, NotFoundError, ValidationError
 
 # Prefix external_code -- HARUS sama dgn pricelist_sync_service.py /
 # product_sync_service.py / customer_sync_service.py.
@@ -8,9 +8,15 @@ PRICELIST_PREFIX = "ODOO-PRICELIST-"
 PRODUCT_PREFIX = "ODOO-PROD-"
 PARTNER_PREFIX = "ODOO-PARTNER-"
 
-# Page size pull GET /pricelists eSuite (tiap record pricelist bisa bawa
-# ratusan produk, jadi tidak dibesarkan supaya response per halaman tetap kecil).
-ESUITE_PAGE_SIZE = 50
+# Page size AWAL pull GET /pricelists eSuite. 23 Oktober 2026 (live): page 50
+# gagal "grpc: received message larger than max (4394601 vs. 4194304)" -- eSuite
+# batasi response gRPC 4MB, tiap pricelist bawa ratusan produk. Sekarang mulai
+# 8 & otomatis dibagi 2 tiap kena error ukuran (lihat _scan_esuite()).
+# WAJIB pangkat 2 (8/4/2/1) supaya offset tetap kelipatan page size baru.
+ESUITE_PAGE_SIZE = 8
+
+# Key nested yang BUKAN milik header pricelist (dilewati saat cari external_code).
+PL_SKIP_KEYS = {"products", "product", "branch", "customer_group", "sales_channel", "currency", "effective_date"}
 
 
 class PricelistCompareService:
@@ -34,7 +40,9 @@ class PricelistCompareService:
         self.odoo = OdooClient()
         self.esuite = EsuiteClient()
 
-    def compare(self, product_name: str, customer: str | None = None, product_limit: int = 5) -> dict:
+    def compare(
+        self, product_name: str, customer: str | None = None, product_limit: int = 5, diagnostic: bool = False
+    ) -> dict:
         product_name = (product_name or "").strip()
         if len(product_name) < 3:
             raise ValidationError("product_name minimal 3 karakter")
@@ -66,11 +74,22 @@ class PricelistCompareService:
             pricelist_ids.add(customer_info["odoo_pricelist_id"])
 
         # Pricelist aktif di Odoo (search_read default skip yang di-archive).
-        active_pl = {pl["id"] for pl in self.odoo.get_pricelists(ids=list(pricelist_ids))} if pricelist_ids else set()
+        odoo_pls = self.odoo.get_pricelists(ids=list(pricelist_ids)) if pricelist_ids else []
+        active_pl = {pl["id"] for pl in odoo_pls}
+        # Fallback cocokkan pricelist eSuite by NAMA (23 Okt 2026: live GET
+        # /pricelists tidak punya external_code top-level). Nama dikirim apa
+        # adanya oleh /sync/pricelist (pricelist["name"]).
+        name_to_code = {(pl.get("name") or "").strip().lower(): f"{PRICELIST_PREFIX}{pl['id']}" for pl in odoo_pls}
+
+        # --- eSuite: produk (id + base_price) by external_code (top-level, terbukti) ---
+        wanted_codes = {f"{PRODUCT_PREFIX}{p['id']}" for p in products}
+        esuite_products = self.esuite.find_by_external_codes("product", wanted_codes)
+        id_to_code = {rec["id"]: code for code, rec in esuite_products.items() if rec.get("id")}
 
         # --- eSuite: 1x scan semua pricelist, ambil entri produk yang dicari ---
-        wanted_codes = {f"{PRODUCT_PREFIX}{p['id']}" for p in products}
-        esuite_hits, esuite_pricelist_codes = self._scan_esuite(wanted_codes)
+        esuite_hits, esuite_pricelist_codes, esuite_unreadable, esuite_diag = self._scan_esuite(
+            wanted_codes, id_to_code, name_to_code
+        )
 
         results = []
         for p in products:
@@ -102,6 +121,13 @@ class PricelistCompareService:
                     "status": "tidak_ada_di_pricelist_odoo",
                 })
 
+            # Kalau ada pricelist eSuite yang tidak terbaca (>4MB), "tidak ada"
+            # belum pasti -- bisa jadi pricelist itu yang tidak terbaca.
+            if esuite_unreadable:
+                for r in rows:
+                    if r["status"] == "pricelist_tidak_ada_di_esuite":
+                        r["status"] = "pricelist_tidak_ditemukan_ada_yang_tidak_terbaca"
+
             esuite_only = [
                 {k: h[k] for k in ("pricelist_external_code", "pricelist_name", "store_price",
                                    "base_price", "customer_group", "status")}
@@ -115,14 +141,24 @@ class PricelistCompareService:
                 "default_code": p.get("default_code") or "",
                 "uom": p["uom_id"][1] if p.get("uom_id") else "",
                 "odoo_list_price": p.get("list_price"),
+                "esuite_product_found": code in esuite_products,
+                "esuite_product_base_price": (esuite_products.get(code) or {}).get("base_price"),
                 "comparisons": rows,
                 "esuite_only": esuite_only,
             })
+
+        if not diagnostic:
+            return self._concise(customer_info, results, esuite_unreadable, len(esuite_pricelist_codes))
 
         return {
             "product_name": product_name,
             "customer": customer_info,
             "products_found": len(products),
+            "esuite_pricelists_scanned": len(esuite_pricelist_codes),
+            "esuite_scan_diag": esuite_diag,
+            # Posisi pricelist eSuite (urutan GET /pricelists) yang > 4MB walau
+            # dibaca 1 per halaman -- hasil compare utk pricelist ini TIDAK lengkap.
+            "esuite_pricelists_unreadable": esuite_unreadable,
             "product_limit": product_limit,
             "note": (
                 "Harga Odoo = fixed_price pricelist item (belum termasuk pajak). "
@@ -194,24 +230,67 @@ class PricelistCompareService:
             "odoo_pricelist_name": pricelist_name,
         }
 
-    def _scan_esuite(self, wanted_codes: set[str]):
+    def _scan_esuite(self, wanted_codes: set[str], id_to_code: dict, name_to_code: dict):
         """
         Pull SEMUA pricelist eSuite (paging), kumpulkan entri products[] yang
-        external_code-nya dicari. Return (hits_by_product_code, set pricelist codes).
+        external_code-nya dicari. Return (hits_by_product_code, set pricelist codes,
+        list offset pricelist yang tidak bisa dibaca).
         Struktur dibaca defensif ("products"/"product", "variant"/"variants")
         krn schema GET /pricelists belum pernah divalidasi live per field.
+
+        Paging berbasis offset: kalau 1 halaman > 4MB (error gRPC ResourceExhausted),
+        page size dibagi 2 lalu halaman yang sama diulang. Offset selalu kelipatan
+        page size baru (size awal dibagi 2 berulang), jadi page = offset // size + 1
+        tetap tepat. Kalau size 1 pun masih gagal, pricelist itu dilewati & dilaporkan.
         """
         hits: dict[str, list] = {}
         pricelist_codes: set[str] = set()
-        page, total_page = 1, 1
-        while page <= total_page:
-            result = self.esuite.pull("pricelists", page=page, limit=ESUITE_PAGE_SIZE)
-            for pl in result.get("data") or []:
-                pl_code = pl.get("external_code") or ""
+        unreadable: list[int] = []
+        # Diagnostik (23 Okt 2026): live pertama cuma "scanned 1" -- catat jumlah
+        # record & jejak paging supaya ketahuan scan berhenti di mana.
+        diag = {
+            "records_read": 0, "pages": [], "empty_external_code": 0, "sample_structure": None,
+            "pricelist_matched_by_name": 0, "product_matched_by_id": 0,
+        }
+        size = ESUITE_PAGE_SIZE
+        offset = 0
+        while True:
+            page = offset // size + 1
+            try:
+                result = self.esuite.pull("pricelists", page=page, limit=size)
+            except AppError as e:
+                too_large = "ResourceExhausted" in e.message or "larger than max" in e.message
+                if not too_large:
+                    raise
+                if size > 1:
+                    size //= 2
+                    continue
+                unreadable.append(offset + 1)  # posisi pricelist ke-n (1-based)
+                offset += 1
+                continue
+
+            data = result.get("data") or []
+            total_page = (result.get("meta") or {}).get("total_page")
+            diag["records_read"] += len(data)
+            if len(diag["pages"]) < 60:
+                diag["pages"].append({"page": page, "limit": size, "got": len(data), "total_page": total_page})
+            if data and diag["sample_structure"] is None:
+                diag["sample_structure"] = self._describe(data[0])
+            for pl in data:
+                pl_code = pl.get("external_code") or self._deep_find(pl, "external_code", PL_SKIP_KEYS) or ""
+                if not pl_code:
+                    diag["empty_external_code"] += 1
+                    pl_code = name_to_code.get((pl.get("name") or "").strip().lower(), "")
+                    if pl_code:
+                        diag["pricelist_matched_by_name"] += 1
                 pricelist_codes.add(pl_code)
                 groups = [g.get("name") for g in (pl.get("customer_group") or []) if isinstance(g, dict)]
                 for prod in pl.get("products") or pl.get("product") or []:
                     code = prod.get("external_code")
+                    if code not in wanted_codes and prod.get("id") in id_to_code:
+                        # Fallback: entri produk cuma bawa id eSuite.
+                        code = id_to_code[prod["id"]]
+                        diag["product_matched_by_id"] += 1
                     if code not in wanted_codes:
                         continue
                     variants = prod.get("variant") or prod.get("variants") or [{}]
@@ -224,6 +303,121 @@ class PricelistCompareService:
                         "store_price": v.get("store_price", prod.get("min_store_price")),
                         "base_price": v.get("base_price", prod.get("min_base_price")),
                     })
-            total_page = (result.get("meta") or {}).get("total_page", page)
-            page += 1
-        return hits, pricelist_codes
+            # Berhenti kalau halaman kosong, atau halaman tidak penuh DAN sudah
+            # halaman terakhir menurut meta.total_page (kalau ada).
+            if not data:
+                break
+            if len(data) < size and (total_page is None or page >= total_page):
+                break
+            offset += size
+            # Naikkan lagi page size (maks ESUITE_PAGE_SIZE) setelah lolos, supaya
+            # 1 pricelist besar tidak bikin sisa scan jalan 1-per-halaman.
+            if size < ESUITE_PAGE_SIZE and offset % (size * 2) == 0:
+                size *= 2
+        return hits, pricelist_codes, unreadable, diag
+
+    @staticmethod
+    def _deep_find(value, key: str, skip: set, depth: int = 0):
+        """Cari key di dict bertingkat (bukan di dalam list / key di skip), maks 3 level."""
+        if depth > 3 or not isinstance(value, dict):
+            return None
+        if value.get(key):
+            return value[key]
+        for k, v in value.items():
+            if k in skip:
+                continue
+            found = PricelistCompareService._deep_find(v, key, skip, depth + 1)
+            if found:
+                return found
+        return None
+
+    @staticmethod
+    def _concise(customer_info, results, unreadable, scanned) -> dict:
+        """
+        Output ringkas (diagnostic=false, DEFAULT) -- 1 baris per produk per
+        pricelist: pricelist + harga Odoo, pricelist + harga eDot, status, keterangan.
+        """
+        out = []
+        for r in results:
+            produk = f"[{r['default_code']}] {r['product_name']}" if r["default_code"] else r["product_name"]
+            base_edot = r["esuite_product_base_price"]
+            for c in r["comparisons"]:
+                pl_name = c.get("odoo_pricelist")
+                prices = c.get("esuite_price") or []
+                edot_price = prices[0] if prices else None
+                st = c["status"]
+                if st == "tidak_ada_di_pricelist_odoo":
+                    odoo_price = r["odoo_list_price"]
+                    ket = f"tidak ada di pricelist {pl_name} -> Odoo pakai harga dasar"
+                    if edot_price is None:
+                        edot_price = base_edot
+                        ket += "; eDot juga tidak ada di pricelist -> harga dasar eDot"
+                    else:
+                        ket += "; TAPI di eDot ada di pricelist ini"
+                elif st == "produk_tidak_ada_di_pricelist_esuite":
+                    odoo_price = c["odoo_price"]
+                    edot_price = base_edot
+                    ket = f"ada di pricelist Odoo {pl_name}, TIDAK ada di pricelist eDot -> eDot kemungkinan pakai harga dasar"
+                elif st.startswith("pricelist_tidak"):
+                    odoo_price = c["odoo_price"]
+                    ket = f"pricelist {pl_name} tidak ditemukan di eDot"
+                elif st == "odoo_bukan_fixed":
+                    odoo_price = None
+                    ket = f"baris Odoo di {pl_name} bukan harga fixed (tidak dikirim bridge)"
+                else:
+                    odoo_price = c["odoo_price"]
+                    ket = "ada di 2 pricelist, harga dobel di eDot" if st == "dobel_di_esuite" else ""
+                if not r["esuite_product_found"]:
+                    ket = (ket + "; " if ket else "") + "produk belum ada di eDot"
+                hasil = "sama" if odoo_price is not None and edot_price == odoo_price else "beda"
+                out.append({
+                    "produk": produk,
+                    "pricelist_odoo": pl_name,
+                    "harga_odoo": odoo_price,
+                    "pricelist_edot": c.get("esuite_pricelist"),
+                    "harga_edot": edot_price,
+                    "hasil": hasil,
+                    "keterangan": ket or ("harga sama" if hasil == "sama" else "harga beda"),
+                })
+            # Mode customer (keputusan user 23 Okt 2026): HANYA pricelist customer
+            # yang ditanyakan -- pricelist eDot lain tidak ditampilkan (tetap ada
+            # di diagnostic=true, field esuite_only).
+            for e in ([] if customer_info else r["esuite_only"]):
+                out.append({
+                    "produk": produk,
+                    "pricelist_odoo": None,
+                    "harga_odoo": None,
+                    "pricelist_edot": e["pricelist_name"],
+                    "harga_edot": e["store_price"],
+                    "hasil": "hanya_di_edot",
+                    "keterangan": f"pricelist eDot memuat produk ini tapi Odoo tidak (customer group: {', '.join(e['customer_group']) or '-'})",
+                })
+        warnings = []
+        if unreadable:
+            warnings.append(f"{len(unreadable)} pricelist eDot tidak terbaca (>4MB), hasil bisa tidak lengkap")
+        if scanned <= 1:
+            warnings.append("pricelist eDot tidak bisa dicocokkan (external_code/nama) -- jalankan diagnostic=true")
+        return {
+            "customer": f"{customer_info['name']} ({customer_info['external_code']})" if customer_info else None,
+            "pricelist_customer_odoo": customer_info.get("odoo_pricelist_name") if customer_info else None,
+            "catatan": "Harga Odoo belum termasuk pajak. Kalau app beda tepat 11% = PPN.",
+            "peringatan": warnings,
+            "hasil": out,
+        }
+
+    @staticmethod
+    def _describe(value, depth: int = 0):
+        """
+        🆕 23 Okt 2026 -- ringkas STRUKTUR 1 record GET /pricelists (key + tipe,
+        list cuma elemen pertama, string dipotong) utk cari letak external_code
+        (live: 268/268 pricelist tanpa external_code top-level).
+        """
+        if depth > 7:
+            return "..."
+        if isinstance(value, dict):
+            return {k: PricelistCompareService._describe(v, depth + 1) for k, v in value.items()}
+        if isinstance(value, list):
+            return [PricelistCompareService._describe(value[0], depth + 1), f"(+{len(value) - 1} item)"] if value else []
+        if isinstance(value, str):
+            return value[:60]
+        return value
