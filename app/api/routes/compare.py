@@ -11,11 +11,11 @@ def compare_pricelist(
         ..., min_length=3,
         description="WAJIB -- nama produk Odoo (ilike, mis. 'ACROYALI Canned'). Kode internal (default_code) tidak dicari.",
     ),
-    customer: str | None = Query(
-        default=None,
+    customer: str = Query(
+        ...,
         description=(
-            "OPSIONAL -- ODOO-PARTNER-<id> atau id angka (mis. ODOO-PARTNER-24522). "
-            "Diisi -> hanya bandingkan pricelist customer itu. Kosong -> semua pricelist yg memuat produk."
+            "WAJIB (23 Okt 2026) -- ODOO-PARTNER-<id> atau id angka (mis. ODOO-PARTNER-24522). "
+            "Hanya pricelist customer ini yang dibandingkan (Odoo & eDot)."
         ),
     ),
     product_limit: int = Query(default=5, ge=1, le=20, description="Maks produk Odoo yang cocok dgn nama."),

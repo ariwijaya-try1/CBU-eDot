@@ -46,6 +46,11 @@ class PricelistCompareService:
         product_name = (product_name or "").strip()
         if len(product_name) < 3:
             raise ValidationError("product_name minimal 3 karakter")
+        # customer WAJIB (keputusan user 23 Okt 2026): selalu cari harga barang X
+        # di pricelist customer Y. Cabang kode "tanpa customer" di bawah tidak
+        # terpakai lagi dari route.
+        if not (customer or "").strip():
+            raise ValidationError("customer wajib diisi (ODOO-PARTNER-<id>)")
 
         products = self.odoo.get_products_raw(limit=product_limit, name=product_name)
         if not products:
