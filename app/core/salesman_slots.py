@@ -20,6 +20,7 @@ Sumber employee_id: hasil GET /employee PROD yang dikirim user 6 Oktober 2026.
 21 Oktober 2026 (konfirmasi user, data Nesa/sales manager): AKUN ikut orang --
 Winaya tetap pakai Salesman_3 (data input lamanya tetap ada) & kini pegang
 slot MT02; Fani pakai Salesman_5 & pegang slot MT04. Akun MT02<->MT04 ditukar.
+4 November 2026 (tabel user): orang MT01 = Yoni (sebelumnya tertulis Yona).
 """
 
 SALESMAN_SLOTS = [
@@ -28,10 +29,26 @@ SALESMAN_SLOTS = [
     {"odoo_slot": "[SALES] BAL MT04", "esuite_employee_id": "202600020", "esuite_username": "Salesman_5", "person": "Fani (MT)"},
     {"odoo_slot": "[SALES] BAL MT03", "esuite_employee_id": "202600014", "esuite_username": "Salesman_4", "person": "Anda (MT)"},
     {"odoo_slot": "[SALES] BAL MT02", "esuite_employee_id": "202600009", "esuite_username": "Salesman_3", "person": "Winaya (MT)"},
-    {"odoo_slot": "[SALES] BAL MT01", "esuite_employee_id": "202600017", "esuite_username": "Salesman_6", "person": "Yona (MT)"},
+    {"odoo_slot": "[SALES] BAL MT01", "esuite_employee_id": "202600017", "esuite_username": "Salesman_6", "person": "Yoni (MT)"},
 ]
 
 SLOTS_BY_NAME = {s["odoo_slot"]: s for s in SALESMAN_SLOTS}
+
+# 4 November 2026 (keputusan user): AKUN MIRROR -- 1 slot Odoo dipakai >1 akun
+# eDot. Akun mirror dapat call plan SAMA PERSIS dgn akun utama slot (outlet &
+# tanggal sama); pembagian tidak bisa ditrace dari Odoo, dilihat di eDot.
+# Sengaja DI LUAR SALESMAN_SLOTS -> Swagger, export Excel & GET visit tetap
+# per slot Odoo (1 akun utama). Kode call plan mirror beda (lihat
+# call_plan_sync_service.MIRROR_CODE_PREFIX) supaya tidak menimpa akun utama.
+# esuite_employee_id kosong = belum diisi -> dilewati + dilaporkan saat push.
+# 202600011 = "Sales Cahaya 8" (screenshot list Employee UI eSuite, 4 Nov 2026).
+MIRROR_ACCOUNTS = [
+    {"odoo_slot": "[SALES] BAL MT01", "esuite_employee_id": "202600011", "esuite_username": "Salesman_8", "person": "Akbar (SMD tim Yoni)"},
+]
+
+MIRRORS_BY_SLOT: dict[str, list[dict]] = {}
+for _m in MIRROR_ACCOUNTS:
+    MIRRORS_BY_SLOT.setdefault(_m["odoo_slot"], []).append(_m)
 
 # 21 Oktober 2026 (user): mode tes call plan SELALU ke akun testing Salesman_12
 # ("Sales Cahaya 12", employee_id terverifikasi UI eSuite 21 Okt). Sengaja DI

@@ -1,15 +1,11 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from enum import Enum
-from io import BytesIO
 
 from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
 from app.clients.odoo_client import OdooClient
 from app.core.exceptions import NotFoundError, OdooRPCError, ValidationError
-from app.core.salesman_slots import SALESMAN_SLOTS
 from app.core.scope import IN_SCOPE_COMPANY_NAMES
-from app.services.visit_schedule_export_service import ExportPeriode, VisitScheduleExportService, resolve_period
-from app.services.visit_schedule_service import VisitScheduleService
+from app.services.visit_schedule_service import WITA, VisitScheduleService
 
 router = APIRouter()
 odoo = OdooClient()
@@ -665,11 +661,37 @@ def get_odoo_stock_quant_raw(
     return odoo.get_stock_quants(product_id=product_id)
 
 
+class VisitPeriode(str, Enum):
+    """6 Nov 2026 -- pilihan rentang GET /odoo/visit-today (select box Swagger)."""
+    hari_ini = "hari_ini"
+    minggu_ini = "minggu_ini"  # Senin-Minggu (konvensi sama /sync/call-plan & export)
+    bulan_ini = "bulan_ini"    # tgl 1 s/d akhir bulan
+
+
+VISIT_MAX_RANGE_DAYS = 62  # pengaman, sama dgn export visit-schedule
+
+
 @router.get("/odoo/visit-today")
 def get_odoo_visit_today(
+    periode: VisitPeriode = Query(
+        default=VisitPeriode.hari_ini,
+        description=(
+            "Rentang (WITA). hari_ini = response lama (1 tanggal, pakai visit_date). "
+            "minggu_ini = Senin-Minggu, bulan_ini = tgl 1 s/d akhir bulan -- patokan "
+            "visit_date (kosong = hari ini). Diabaikan kalau date_from diisi."
+        ),
+    ),
     visit_date: date | None = Query(
         default=None,
-        description="OPSIONAL -- tanggal kunjungan YYYY-MM-DD. Kosong = hari ini (WITA).",
+        description="OPSIONAL -- tanggal kunjungan / patokan periode, YYYY-MM-DD. Kosong = hari ini (WITA).",
+    ),
+    date_from: date | None = Query(
+        default=None,
+        description="OPSIONAL -- tanggal awal manual YYYY-MM-DD (periode & visit_date diabaikan).",
+    ),
+    date_to: date | None = Query(
+        default=None,
+        description="OPSIONAL -- tanggal akhir manual (kosong = sama dgn date_from). Maks 62 hari.",
     ),
     salesperson_ids: str | None = Query(
         default=None,
@@ -689,11 +711,18 @@ def get_odoo_visit_today(
     Pakai: copy `external_codes_csv` ke
     `POST /api/sync/outlet-stock?external_codes=...` (dry_run dulu).
 
-    Aturan minggu: minggu kalender Senin-Minggu; minggu yang memuat tgl 1 =
-    minggu ke-1 bulan itu. M1 tiap minggu; M2C13 minggu 1 & 3; M2C24 minggu
-    2 & 4; M4C2 minggu 2; M4C3 minggu 3 (minggu ke-5 dilewati utk M2/M4).
+    Aturan minggu: Minggu-Sabtu di dalam bulan, tgl 1 = minggu ke-1; baris
+    ke-5 = minggu 1 (ganjil), ke-6 = minggu 2 (genap). M1 tiap minggu; M2C13
+    minggu 1 & 3; M2C24 minggu 2 & 4; M4C1/M4C2/M4C3/M4C4 minggu 1/2/3/4.
+    Visit day Senin-Sabtu.
     Baris visit tidak valid (terisi sebagian, kode di luar daftar, pasangan
     frequency salah) dilewati dan dilaporkan di `invalid_rows`.
+
+    6 Nov 2026 -- rentang: `periode` minggu_ini / bulan_ini, atau
+    `date_from`-`date_to`. Response rentang: `days[]` per tanggal (outlet +
+    `external_codes_csv` harian) + `external_codes_csv` outlet UNIK sepanjang
+    rentang. `periode=hari_ini` tanpa date_from = response lama (dipakai
+    scripts/daily_sync.py).
     """
     ids = None
     if salesperson_ids:
@@ -704,9 +733,39 @@ def get_odoo_visit_today(
                 f"Parameter 'salesperson_ids' harus angka semua, pisah koma -- dapat: '{salesperson_ids}'",
                 details={"salesperson_ids": salesperson_ids},
             )
-    return VisitScheduleService().get_visits_on(
-        visit_date=visit_date, salesperson_ids=ids, company_id=company_id
+
+    # Mode lama (1 tanggal) -- response tidak berubah.
+    if not date_from and periode == VisitPeriode.hari_ini:
+        return VisitScheduleService().get_visits_on(
+            visit_date=visit_date, salesperson_ids=ids, company_id=company_id
+        )
+
+    if date_from:
+        d_from, d_to = date_from, date_to or date_from
+    else:
+        anchor = visit_date or datetime.now(WITA).date()
+        if periode == VisitPeriode.minggu_ini:
+            d_from = anchor - timedelta(days=anchor.weekday())  # Senin
+            d_to = d_from + timedelta(days=6)
+        else:  # bulan_ini
+            d_from = anchor.replace(day=1)
+            d_to = (d_from + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+    if d_to < d_from:
+        raise ValidationError(
+            "date_to tidak boleh sebelum date_from",
+            details={"date_from": d_from.isoformat(), "date_to": d_to.isoformat()},
+        )
+    if (d_to - d_from).days + 1 > VISIT_MAX_RANGE_DAYS:
+        raise ValidationError(
+            f"Rentang maksimal {VISIT_MAX_RANGE_DAYS} hari",
+            details={"date_from": d_from.isoformat(), "date_to": d_to.isoformat()},
+        )
+
+    result = VisitScheduleService().get_visits_between(
+        date_from=d_from, date_to=d_to, salesperson_ids=ids, company_id=company_id
     )
+    return {"periode": "manual" if date_from else periode.value, **result}
 
 
 @router.get("/odoo/visit-schedule")
@@ -740,48 +799,3 @@ def get_odoo_visit_schedule(
         raise ValidationError("Maksimal 50 outlet per request", details={"count": len(codes)})
     ids = list(dict.fromkeys(int(c[len(prefix):]) for c in codes))
     return VisitScheduleService().get_outlet_schedule(partner_ids=ids, date_from=date_from, weeks=weeks)
-
-
-# 2 November 2026 -- pilihan slot (select box Swagger) = isi tabel mapping.
-# Enum("Nama", {key: value}) = cara bikin Enum dinamis dari data.
-ExportSlot = Enum("ExportSlot", {s["odoo_slot"]: s["odoo_slot"] for s in SALESMAN_SLOTS}, type=str)
-
-
-@router.get("/odoo/visit-schedule/export")
-def export_odoo_visit_schedule(
-    periode: ExportPeriode = Query(
-        default=ExportPeriode.bulan_ini,
-        description=(
-            "Rentang (WITA), tanpa ketik. Diabaikan kalau date_from diisi. "
-            "bulan_ini / bulan_depan = Senin minggu ke-1 s/d Minggu minggu terakhir bulan itu "
-            "(aturan minggu sales, mis. Nov 2026 = 26 Okt - 29 Nov). minggu_* = Senin-Minggu."
-        ),
-    ),
-    slots: list[ExportSlot] | None = Query(
-        default=None,
-        description="OPSIONAL -- slot sales (boleh banyak). Kosong = SEMUA slot di app/core/salesman_slots.py.",
-    ),
-    date_from: date | None = Query(default=None, description="OPSIONAL -- tanggal awal manual YYYY-MM-DD (periode diabaikan)."),
-    date_to: date | None = Query(default=None, description="OPSIONAL -- tanggal akhir manual (kosong = sama dgn date_from). Maks 62 hari."),
-):
-    """
-    Download Excel call plan HITUNGAN dari visit cycle Odoo utk direview
-    sales manager -- 2 November 2026. Read-only (tidak kirim ke eSuite).
-
-    Tanggal dihitung sama persis dgn `POST /sync/call-plan`. Sheet: Ringkasan
-    (rekap review otomatis), Beban Harian, 1 sheet per sales (1 baris per
-    outlet, kolom per minggu, kolom KUNING: Review OK/Revisi + usulan cycle/
-    hari + catatan), Perlu Dicek (visit tidak valid / Salesperson di luar
-    tabel slot), Detail Kunjungan (1 baris per kunjungan + kode call plan).
-
-    Di Swagger: Execute -> klik "Download file".
-    """
-    d_from, d_to = resolve_period(periode, date_from, date_to)
-    content, filename = VisitScheduleExportService().build(
-        d_from, d_to, [s.value for s in slots] if slots else None
-    )
-    return StreamingResponse(
-        BytesIO(content),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )

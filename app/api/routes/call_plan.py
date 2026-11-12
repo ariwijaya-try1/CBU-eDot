@@ -21,6 +21,7 @@ class Periode(str, Enum):
     besok = "besok"
     minggu_ini = "minggu_ini"      # Senin-Minggu minggu berjalan
     minggu_depan = "minggu_depan"  # Senin-Minggu minggu depan
+    bulan_ini = "bulan_ini"        # 4 Nov 2026: tgl 1 s/d akhir bulan berjalan
 
 
 def _periode_range(periode: Periode) -> tuple[date, date]:
@@ -33,6 +34,10 @@ def _periode_range(periode: Periode) -> tuple[date, date]:
     if periode == Periode.minggu_depan:
         monday = today - timedelta(days=today.weekday()) + timedelta(days=7)
         return monday, monday + timedelta(days=6)
+    if periode == Periode.bulan_ini:
+        first = today.replace(day=1)
+        next_first = (first + timedelta(days=32)).replace(day=1)  # tgl 1 bulan depan
+        return first, next_first - timedelta(days=1)
     return today, today
 
 
@@ -46,7 +51,7 @@ def sync_call_plan(
         default=Periode.hari_ini,
         description=(
             "Pilihan rentang tanggal (WITA), tanpa ketik. Diabaikan kalau date_from diisi. "
-            "minggu_ini / minggu_depan = Senin-Minggu."
+            "minggu_ini / minggu_depan = Senin-Minggu. bulan_ini = tgl 1 s/d akhir bulan berjalan."
         ),
     ),
     date_from: date | None = Query(
@@ -94,6 +99,14 @@ def sync_call_plan(
     limit: int | None = Query(
         default=None, ge=1, description="OPSIONAL -- kirim maksimal N jadwal (utk tes kecil; call plan belum bisa dihapus)."
     ),
+    # 4 Nov 2026: akun mirror (salesman_slots.MIRROR_ACCOUNTS, mis. Akbar SMD MT01).
+    include_mirrors: bool = Query(
+        default=True,
+        description=(
+            "DEFAULT TRUE -- jadwal slot juga dikirim ke akun mirror-nya (jadwal sama persis, "
+            "kode `ODOO-CP-{employee_id}-{id partner}-{YYYYMMDD}`). False = akun utama saja. Diabaikan di mode tes."
+        ),
+    ),
 ):
     """
     Kirim jadwal kunjungan sales (call plan) dari visit cycle Odoo ke eSuite
@@ -101,14 +114,19 @@ def sync_call_plan(
 
     - **Sumber:** Contact Odoo ber-visit (`x_studio_visit_cycle` / `_day` /
       `_frequency`) milik slot terpilih (`user_id`).
-    - **Tanggal:** dihitung bridge. Minggu kalender Senin-Minggu; minggu yang
-      memuat tgl 1 = minggu ke-1. M1 tiap minggu; M2C13 minggu 1 & 3; M2C24
-      minggu 2 & 4; M4C2 minggu 2; M4C3 minggu 3.
+    - **Tanggal:** dihitung bridge. Minggu = Minggu-Sabtu di dalam bulan, tgl 1
+      = minggu ke-1; baris ke-5 = minggu 1 (ganjil), ke-6 = minggu 2 (genap).
+      M1 tiap minggu; M2C13 minggu 1 & 3; M2C24 minggu 2 & 4;
+      M4C1/M4C2/M4C3/M4C4 minggu 1/2/3/4. Visit day Senin-Sabtu.
     - **Dilewati + dilaporkan:** data visit tidak valid (`invalid_rows`),
       customer belum ada di eSuite / beda branch dgn salesman (`skipped`).
     - **Info:** `customer_not_mapped_to_salesman_count` -- customer yang di
       eSuite belum ter-mapping ke salesman itu (tetap dikirim).
-    - **Kode per jadwal:** `ODOO-CP-{id partner}-{YYYYMMDD}`.
+    - **Kode per jadwal:** `ODOO-CP-{id partner}-{YYYYMMDD}`; akun mirror
+      `ODOO-CP-{employee_id}-{id partner}-{YYYYMMDD}`.
+    - **Akun mirror** (1 slot Odoo, >1 akun eDot): dapat jadwal sama persis
+      dgn akun utama (`include_mirrors`). Customer juga harus ter-mapping ke
+      akun mirror di eSuite (mass-customer-sales `mode=add`).
     - **Kirim ulang kode yang sama = update** (type/tanggal dll; status &
       riwayat kunjungan tetap). Tipe `generated` tampil "Call Plan".
     - **Jangan push ulang rentang yang sama** setelah admin menghapus call
@@ -131,4 +149,5 @@ def sync_call_plan(
         test_employee_id=(test_employee_id or "").strip() or (TEST_EMPLOYEE_ID if test_mode else None),
         external_codes=external_codes,
         limit=limit,
+        include_mirrors=include_mirrors,
     )

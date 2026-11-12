@@ -22,6 +22,7 @@ from app.api.routes.order_history import router as order_history_router
 from app.api.routes.outlet_stock import router as outlet_stock_router
 from app.api.routes.call_plan import router as call_plan_router
 from app.api.routes.compare import router as compare_router
+from app.api.routes.export import router as export_router
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -102,6 +103,7 @@ app.include_router(order_history_router, prefix="/api", tags=["Sync"])
 app.include_router(outlet_stock_router, prefix="/api", tags=["Sync"])
 app.include_router(call_plan_router, prefix="/api", tags=["Sync"])
 app.include_router(compare_router, prefix="/api", tags=["Compare"])
+app.include_router(export_router, prefix="/api", tags=["Export"])
 
 
 @app.get("/")

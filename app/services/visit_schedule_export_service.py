@@ -10,9 +10,8 @@ Aturan tanggal SAMA PERSIS dgn POST /sync/call-plan: `visit_dates()`
 (call_plan_sync_service.py) + aturan minggu `week_of_month()`
 (visit_schedule_service.py, Decision Log visit cycle 5 & 7 Okt 2026).
 
-Periode "bulan" = Senin minggu ke-1 s/d Minggu minggu terakhir bulan itu
-menurut aturan minggu sales (bukan tgl 1 s/d akhir bulan). Contoh Nov 2026:
-26 Okt - 29 Nov (30 Nov = minggu ke-1 Desember).
+Periode "bulan" = tgl 1 s/d akhir bulan (aturan minggu Nesa 3 Nov 2026:
+minggu dihitung di dalam bulan tanggal itu sendiri).
 
 Isi workbook:
 - Ringkasan      : per sales (jumlah outlet, kunjungan, invalid) + rekap
@@ -21,8 +20,13 @@ Isi workbook:
 - 1 sheet/sales  : 1 baris per outlet, kolom per minggu berisi tanggal
                    kunjungan; kolom KUNING diisi Nesa (Review OK/Revisi,
                    usulan cycle/hari, catatan).
-- Perlu Dicek    : visit cycle tidak valid + (mode semua sales) customer
-                   ber-visit yang Salesperson-nya tidak ada di tabel slot.
+- Perlu Dicek    : visit cycle tidak valid + customer ber-visit tanpa
+                   Salesperson.
+
+Mode semua sales (slots kosong, 2 Nov 2026 permintaan user): SEMUA
+Salesperson Odoo yang punya customer ber-visit dapat sheet -- 6 slot tabel
+salesman_slots.py dulu, lalu Salesperson lain (akun eDot "belum di-mapping":
+call plan-nya belum bisa di-push sampai ditambah ke tabel slot).
 - Detail Kunjungan: 1 baris per kunjungan (= calon call plan + kodenya).
 """
 from datetime import date, datetime, timedelta
@@ -50,7 +54,7 @@ from app.services.visit_schedule_service import (
 MAX_EXPORT_DAYS = 62  # pengaman (2 bulan); 1 bulan aturan sales maks 35 hari
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 REVIEW_OPTIONS = ["OK", "Revisi"]
-WEEKDAY_LABELS = DAY_LABELS[:5]  # visit day Senin-Jumat
+WEEKDAY_LABELS = DAY_LABELS[:6]  # visit day Senin-Sabtu (Sabtu sejak 4 Nov 2026)
 
 
 class ExportPeriode(str, Enum):
@@ -62,12 +66,10 @@ class ExportPeriode(str, Enum):
 
 
 def month_range(year: int, month: int) -> tuple[date, date]:
-    """Senin minggu ke-1 s/d Minggu minggu terakhir bulan itu (aturan minggu sales)."""
+    """Tgl 1 s/d akhir bulan (aturan minggu Nesa 3 Nov 2026)."""
     first = date(year, month, 1)
-    start = first - timedelta(days=first.weekday())
     last = date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)
-    end = last - timedelta(days=(last.weekday() + 1) % 7)  # mundur ke hari Minggu
-    return start, end
+    return first, last
 
 
 def resolve_period(periode: ExportPeriode, date_from: date | None, date_to: date | None) -> tuple[date, date]:
@@ -93,7 +95,8 @@ def _fmt(d: date) -> str:
 def _sheet_title(slot: dict) -> str:
     # "[SALES] BAL GT02" + "Ali (GT)" -> "GT02 Ali" (maks 31 char, tanpa []:*?/\)
     short = slot["odoo_slot"].replace("[SALES]", "").replace("BAL", "").strip()
-    title = f"{short} {slot['person'].split(' ')[0]}"
+    person = slot["person"] if slot["person"] != slot["odoo_slot"] else ""  # Salesperson di luar tabel slot
+    title = f"{short} {person.split(' ')[0]}".strip() or "Sales"
     return "".join(c for c in title if c not in "[]:*?/\\")[:31]
 
 
@@ -115,9 +118,14 @@ class VisitScheduleExportService:
                 details={"date_from": str(date_from), "date_to": str(date_to)},
             )
 
-        slot_names = list(dict.fromkeys(slots)) if slots else [s["odoo_slot"] for s in SALESMAN_SLOTS]
         selections = {f: VisitScheduleService()._selection_map(f) for f in VISIT_FIELDS}
         partners = self.odoo.get_customers_with_visit_schedule(VISIT_FIELDS)
+        if slots:
+            slot_names = list(dict.fromkeys(slots))
+        else:  # semua Salesperson ber-visit: slot ter-mapping dulu, sisanya urut nama
+            mapped = [s["odoo_slot"] for s in SALESMAN_SLOTS]
+            others = sorted({p["user_id"][1] for p in partners if p.get("user_id")} - set(mapped))
+            slot_names = mapped + others
         routes = self._delivery_routes()
 
         outlets_by_slot: dict[str, list[dict]] = {name: [] for name in slot_names}
@@ -134,9 +142,9 @@ class VisitScheduleExportService:
                 "salesperson": salesperson or "(tanpa Salesperson)",
             }
             if salesperson not in outlets_by_slot:
-                # Mode semua sales: laporkan outlet ber-visit di luar tabel slot.
+                # Mode semua sales: yang tersisa di sini = customer tanpa Salesperson.
                 if not slots:
-                    problems.append({**row, "reason": "Salesperson tidak ada di tabel slot sales (app/core/salesman_slots.py)"})
+                    problems.append({**row, "reason": "Customer ber-visit tanpa Salesperson di Odoo"})
                 continue
             reason = VisitScheduleService._invalid_reason(row["cycle"], row["day"], row["freq"])
             if reason:
@@ -206,7 +214,11 @@ class VisitScheduleExportService:
         weeks, d = [], date_from - timedelta(days=date_from.weekday())
         while d <= date_to:
             _, m, w = week_of_month(d)
-            weeks.append((d, f"Mg-{w} {MONTHS[m - 1]}\n({d.day}/{d.month})"))
+            label = f"Mg-{w} {MONTHS[m - 1]}"
+            _, m2, w2 = week_of_month(d + timedelta(days=5))  # Senin-Sabtu bisa beda bulan
+            if (m2, w2) != (m, w):
+                label += f" / Mg-{w2} {MONTHS[m2 - 1]}"
+            weeks.append((d, f"{label}\n({d.day}/{d.month})"))
             d += timedelta(days=7)
         period_text = f"{_fmt(date_from)} s/d {_fmt(date_to)}"
         generated = datetime.now(WITA).strftime("%d/%m/%Y %H:%M WITA")
@@ -219,7 +231,7 @@ class VisitScheduleExportService:
         sheet_refs = {}  # slot -> (judul sheet, kolom review, baris akhir)
         all_visits = []
         for name in slot_names:
-            slot = SLOTS_BY_NAME.get(name) or {"odoo_slot": name, "person": name, "esuite_username": "-", "esuite_employee_id": "-"}
+            slot = SLOTS_BY_NAME.get(name) or {"odoo_slot": name, "person": name, "esuite_username": "(belum di-mapping)"}
             rows = outlets_by_slot[name]
             ws = wb.create_sheet(_sheet_title(slot))
             ws["A1"] = f"Call Plan {slot['person']} -- {name} -- Akun eDot {slot['esuite_username']}"
@@ -228,7 +240,7 @@ class VisitScheduleExportService:
                         "Kolom KUNING diisi reviewer, kolom lain jangan diubah")
             labels = ["No", "Hari", "Outlet", "Partner ID", "Rute", "Cycle", "Freq"] + [w[1] for w in weeks] + [
                 "Jml", "Review (OK/Revisi)", "Usulan Cycle", "Usulan Hari", "Catatan"]
-            widths = [5, 9, 38, 10, 18, 9, 6] + [11] * len(weeks) + [6, 12, 12, 12, 40]
+            widths = [5, 9, 38, 10, 18, 9, 6] + [13] * len(weeks) + [6, 12, 12, 12, 40]
             header(ws, 4, labels, widths)
             ws.row_dimensions[4].height = 32
             first_week_col = 8
@@ -237,7 +249,9 @@ class VisitScheduleExportService:
                 excel_row = 4 + i
                 by_week = {dt - timedelta(days=dt.weekday()): dt for dt in r["dates"]}
                 values = [i, DAY_LABELS[DAY_NAMES[r["day"]]], r["name"], r["partner_id"], r["route"], r["cycle"], r["freq"]]
-                values += [f"{by_week[w[0]].day}/{by_week[w[0]].month}" if w[0] in by_week else None for w in weeks]
+                # 2 Nov 2026 (user): tampilkan nama hari, mis. "Senin 2/11"
+                values += [f"{DAY_LABELS[by_week[w[0]].weekday()]} {by_week[w[0]].day}/{by_week[w[0]].month}"
+                           if w[0] in by_week else None for w in weeks]
                 values += [len(r["dates"])]
                 for col, v in enumerate(values, start=1):
                     ws.cell(row=excel_row, column=col, value=v)
@@ -261,8 +275,9 @@ class VisitScheduleExportService:
         info = [
             f"Periode: {period_text}",
             f"Dibuat: {generated} | Sumber: visit cycle Odoo (jadwal HITUNGAN bridge, BUKAN call plan yang sudah masuk eDot)",
-            "Aturan minggu: minggu (Senin-Minggu) yang memuat tgl 1 = minggu ke-1. M1 tiap minggu; M2C13 minggu 1 & 3; "
-            "M2C24 minggu 2 & 4; M4C2 minggu 2; M4C3 minggu 3; minggu ke-5 tanpa kunjungan M2/M4.",
+            "Aturan minggu: Minggu-Sabtu di dalam bulan, tgl 1 = minggu ke-1; baris ke-5 = minggu 1 (ganjil), "
+            "baris ke-6 = minggu 2 (genap). M1 tiap minggu; M2C13 minggu 1 & 3; M2C24 minggu 2 & 4; "
+            "M4C1/M4C2/M4C3/M4C4 minggu 1/2/3/4. Visit day Senin-Sabtu.",
             "Cara review: buka sheet tiap sales -> isi kolom KUNING per outlet (Review OK / Revisi; kalau Revisi isi usulan "
             "cycle / hari / catatan). Cek juga sheet 'Perlu Dicek'. Tabel di bawah terisi otomatis.",
         ]
@@ -289,10 +304,11 @@ class VisitScheduleExportService:
         for c in range(4, 10):
             L = get_column_letter(c)
             ws_sum.cell(row=r_i, column=c, value=f"=SUM({L}8:{L}{r_i - 1})").font = bold
-        outside = len([p for p in problems if p["salesperson"] not in sheet_refs])
-        if outside:
+        unmapped = [n for n in slot_names if n not in SLOTS_BY_NAME]
+        if unmapped:
             ws_sum.cell(row=r_i + 2, column=1,
-                        value=f"Info: {outside} outlet ber-visit milik Salesperson di luar tabel slot -> lihat sheet 'Perlu Dicek'.")
+                        value=f"Info: {len(unmapped)} Salesperson belum di-mapping ke akun eDot (tabel salesman_slots.py) -> "
+                              "jadwal tetap ditampilkan utk review, tapi call plan-nya belum bisa di-push.")
         r_w = r_i + 4
         ws_sum.cell(row=r_w, column=1, value="Minggu dalam periode").font = bold
         for i, (monday, label) in enumerate(weeks, start=1):
@@ -311,7 +327,7 @@ class VisitScheduleExportService:
             counts[(dt, slot["odoo_slot"])] = counts.get((dt, slot["odoo_slot"]), 0) + 1
         row_i, d = 4, date_from
         while d <= date_to:
-            if d.weekday() < 5:
+            if d.weekday() < 6:  # Senin-Sabtu
                 _, m, w = week_of_month(d)
                 values = [d, DAY_LABELS[d.weekday()], f"Mg-{w} {MONTHS[m - 1]}"]
                 values += [counts.get((d, n), 0) for n in slot_names]

@@ -5,3 +5,4 @@ python-dotenv
 pydantic
 pydantic-settings
 slowapi==0.1.9
+openpyxl==3.1.5

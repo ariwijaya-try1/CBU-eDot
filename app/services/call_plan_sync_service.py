@@ -29,7 +29,7 @@ from datetime import date, datetime, timedelta, timezone
 from app.clients.esuite_client import EsuiteClient
 from app.clients.odoo_client import OdooClient
 from app.core.exceptions import AppError, ValidationError
-from app.core.salesman_slots import SLOTS_BY_NAME
+from app.core.salesman_slots import MIRRORS_BY_SLOT, SLOTS_BY_NAME
 from app.core.sync_logger import log_sync_result
 from app.services.visit_schedule_service import (
     CUSTOMER_EXTERNAL_CODE_PREFIX,
@@ -52,6 +52,9 @@ EXTERNAL_CODE_PREFIX = "ODOO-CP-"
 # ke akun eSuite lain (akun testing). Kode dibedakan supaya TIDAK menimpa
 # call plan asli slot tsb (upsert by external_code, terbukti 12 Oktober).
 TEST_EXTERNAL_CODE_PREFIX = "ODOO-CP-TEST-"
+# 4 November 2026 -- akun mirror (salesman_slots.MIRROR_ACCOUNTS): kode
+# ODOO-CP-{employee_id}-{id partner}-{YYYYMMDD}, beda dgn akun utama.
+MIRROR_CODE_PREFIX = "ODOO-CP-"
 
 # 21 Oktober 2026 (dev): "generated" = jadwal rutin -> tampil "Call Plan" &
 # dihitung di KPI. Wajib huruf kecil persis (salah ketik tampil "Random").
@@ -101,6 +104,7 @@ class CallPlanSyncService:
         test_employee_id: str | None = None,
         external_codes: str | None = None,
         limit: int | None = None,
+        include_mirrors: bool = True,
     ) -> dict:
         self._validate_range(date_from, date_to)
         if not slots:
@@ -127,7 +131,18 @@ class CallPlanSyncService:
 
         # 2. Resolve slot: id Odoo (dari customer) + akun eSuite (id internal & branch).
         slot_infos = [self._resolve_slot(name, user_ids_by_name, test_employee_id) for name in dict.fromkeys(slots)]
-        by_user_id = {s["odoo_user_id"]: s for s in slot_infos}
+        # 4 Nov 2026: akun mirror ikut slot utamanya (tidak di mode tes).
+        mirror_skipped = []
+        if include_mirrors and not test_employee_id:
+            for primary in list(slot_infos):
+                for m in MIRRORS_BY_SLOT.get(primary["odoo_slot"], []):
+                    if not (m.get("esuite_employee_id") or "").strip():
+                        mirror_skipped.append({**m, "reason": "esuite_employee_id belum diisi di salesman_slots.py"})
+                        continue
+                    slot_infos.append(self._resolve_mirror(primary, m))
+        by_user_id: dict[int, list[dict]] = {}
+        for s in slot_infos:
+            by_user_id.setdefault(s["odoo_user_id"], []).append(s)
 
         # 3. Customer ber-visit milik slot terpilih -> tanggal kunjungan.
         vs = VisitScheduleService()
@@ -138,10 +153,12 @@ class CallPlanSyncService:
 
         invalid_rows, planned = [], []
         for p in partners:
-            slot = by_user_id.get(p["user_id"][0]) if p.get("user_id") else None
-            if not slot:
+            slot_group = by_user_id.get(p["user_id"][0]) if p.get("user_id") else None
+            if not slot_group:
                 continue
-            slot["customers_with_visit_data"] += 1
+            slot = slot_group[0]  # akun utama (mirror selalu di belakang)
+            for s in slot_group:
+                s["customers_with_visit_data"] += 1
             cycle = _normalize(p.get(VISIT_CYCLE_FIELD), selections[VISIT_CYCLE_FIELD])
             day = _normalize(p.get(VISIT_DAY_FIELD), selections[VISIT_DAY_FIELD])
             freq = _normalize(p.get(VISIT_FREQUENCY_FIELD), selections[VISIT_FREQUENCY_FIELD])
@@ -156,12 +173,15 @@ class CallPlanSyncService:
             }
             reason = VisitScheduleService._invalid_reason(cycle, day, freq)
             if reason:
-                slot["invalid_count"] += 1
-                invalid_rows.append({**base, "reason": reason})
+                for s in slot_group:
+                    s["invalid_count"] += 1
+                invalid_rows.append({**base, "reason": reason})  # 1x per outlet, tidak dobel per mirror
                 continue
-            slot["valid_schedule_count"] += 1
-            for d in visit_dates(cycle, day, date_from, date_to):
-                planned.append({**base, "date": d, "slot": slot})
+            dates = visit_dates(cycle, day, date_from, date_to)
+            for s in slot_group:
+                s["valid_schedule_count"] += 1
+                for d in dates:
+                    planned.append({**base, "date": d, "slot": s})
 
         # 3. Guard customer eSuite (harus ada + branch sama dgn salesman).
         codes = {v["customer_external_code"] for v in planned}
@@ -176,6 +196,8 @@ class CallPlanSyncService:
             d = v.pop("date")
             row = {
                 **v,
+                "esuite_username": slot["esuite_username"],
+                "role": slot["role"],
                 "date": d.isoformat(),
                 "day": DAY_LABELS[d.weekday()],
                 "week_of_month": week_of_month(d)[2],
@@ -233,6 +255,8 @@ class CallPlanSyncService:
             "test_mode": bool(test_employee_id),
             "limit": limit,
             "slots": [dict(s) for s in slot_infos],
+            "include_mirrors": include_mirrors and not test_employee_id,
+            "mirror_skipped": mirror_skipped,
             "visit_count": len(items),
             "skipped_count": len(skipped),
             "invalid_count": len(invalid_rows),
@@ -279,6 +303,50 @@ class CallPlanSyncService:
             note=f"{date_from}..{date_to} slots={','.join(s['odoo_slot'] for s in slot_infos)}",
         )
         return result
+
+    def _lookup_employee(self, odoo_slot: str, employee_id: str) -> tuple[dict, list[str]]:
+        """employee_id eSuite -> (record GET /employee, branch ids). Gagal = berhenti dgn pesan jelas."""
+        records = (self.esuite.pull_by_param("employee", "employee_id", employee_id).get("data") or [])
+        if not records:
+            raise ValidationError(
+                f"Akun eSuite employee_id '{employee_id}' (slot '{odoo_slot}') tidak ditemukan",
+                details={"odoo_slot": odoo_slot, "esuite_employee_id": employee_id},
+            )
+        emp = records[0]
+        branch_ids = [b.get("id") for b in (emp.get("branches") or []) if b.get("id")]
+        if not branch_ids:
+            raise ValidationError(
+                f"Akun eSuite '{emp.get('name')}' (slot '{odoo_slot}') tidak punya branch",
+                details={"odoo_slot": odoo_slot, "esuite_employee_id": employee_id},
+            )
+        return emp, branch_ids
+
+    def _resolve_mirror(self, primary: dict, mirror: dict) -> dict:
+        """4 Nov 2026 -- akun mirror: id Odoo sama dgn slot utama, akun eSuite sendiri."""
+        employee_id = mirror["esuite_employee_id"].strip()
+        emp, branch_ids = self._lookup_employee(primary["odoo_slot"], employee_id)
+        warnings = []
+        if emp.get("username") and emp.get("username") != mirror["esuite_username"]:
+            warnings.append(f"username eSuite '{emp.get('username')}' beda dgn tabel mirror '{mirror['esuite_username']}'")
+        if emp.get("status") and emp.get("status") != "active":
+            warnings.append(f"status akun eSuite '{emp.get('status')}'")
+        return {
+            **primary,
+            "person": mirror["person"],
+            "esuite_employee_id": employee_id,
+            "call_plan_code_prefix": f"{MIRROR_CODE_PREFIX}{employee_id}-",
+            "esuite_id": emp.get("id"),
+            "esuite_name": emp.get("name"),
+            "esuite_username": emp.get("username"),
+            "esuite_branch_ids": branch_ids,
+            "role": "mirror",
+            "mirror_of": primary["esuite_username"],
+            "warnings": warnings,
+            "customers_with_visit_data": 0,
+            "valid_schedule_count": 0,
+            "invalid_count": 0,
+            "visit_count": 0,
+        }
 
     def _delivery_routes(self) -> dict[int, str]:
         """
@@ -339,19 +407,7 @@ class CallPlanSyncService:
 
         # eSuite: employee_id -> id internal + branch. Mode tes: akun pengganti.
         employee_id = test_employee_id or mapping["esuite_employee_id"]
-        records = (self.esuite.pull_by_param("employee", "employee_id", employee_id).get("data") or [])
-        if not records:
-            raise ValidationError(
-                f"Akun eSuite employee_id '{employee_id}' (slot '{odoo_slot}') tidak ditemukan",
-                details={"odoo_slot": odoo_slot, "esuite_employee_id": employee_id},
-            )
-        emp = records[0]
-        branch_ids = [b.get("id") for b in (emp.get("branches") or []) if b.get("id")]
-        if not branch_ids:
-            raise ValidationError(
-                f"Akun eSuite '{emp.get('name')}' (slot '{odoo_slot}') tidak punya branch",
-                details={"odoo_slot": odoo_slot, "esuite_employee_id": employee_id},
-            )
+        emp, branch_ids = self._lookup_employee(odoo_slot, employee_id)
 
         warnings = []
         if test_employee_id:
@@ -375,6 +431,7 @@ class CallPlanSyncService:
             "esuite_name": emp.get("name"),
             "esuite_username": emp.get("username"),
             "esuite_branch_ids": branch_ids,
+            "role": "test" if test_employee_id else "primary",
             "warnings": warnings,
             "customers_with_visit_data": 0,
             "valid_schedule_count": 0,
