@@ -165,6 +165,11 @@ class OutletStockSyncService:
             for pid in entry["product_ids"]
         }
         verified_product_codes = self._find_verified_product_codes(wanted_product_codes)
+        # 9 November 2026 -- produk DISCONTINUE (= di-archive di Odoo) tidak
+        # dikirim walau masih ada di eSuite (sync produk tidak menonaktifkan
+        # produk di eSuite). Tanpa ini, item yang sudah dihapus sales di eWork
+        # dibuat ulang tiap push. Masuk skipped_products (reason "di-archive").
+        verified_product_codes -= self._find_archived_product_codes(verified_product_codes)
 
         # Item payload. Tidak mungkin dobel: 1 customer x 1 produk = 1 baris
         # (product_ids per customer sudah unik dari Odoo).
@@ -519,6 +524,28 @@ class OutletStockSyncService:
                 v.get("external_code") == code and v.get("id")
                 for v in (record.get("variants") or [])
             )
+        }
+
+    def _find_archived_product_codes(self, codes: set[str]) -> set[str]:
+        """
+        9 November 2026 -- external_code produk yang di-ARCHIVE di Odoo
+        (active=False, = discontinue) atau sudah terhapus dari Odoo.
+        Pakai get_products_sync_status() (context active_test False).
+        Lookup gagal -> AppError diteruskan (sync berhenti) supaya produk
+        discontinue tidak ikut terkirim diam-diam.
+        """
+        ids = {}
+        for code in codes:
+            raw = code[len(PRODUCT_EXTERNAL_CODE_PREFIX):]
+            if raw.isdigit():
+                ids[int(raw)] = code
+        if not ids:
+            return set()
+        status_by_id = self.odoo.get_products_sync_status(list(ids))
+        return {
+            code
+            for pid, code in ids.items()
+            if not (status_by_id.get(pid) or {}).get("active")
         }
 
     def _parse_external_codes(self, external_codes: str) -> list[int]:

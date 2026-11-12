@@ -1201,6 +1201,26 @@ class OdooClient:
                 }
         return result
 
+    def get_partner_salespersons(self, partner_ids: list[int]) -> dict[int, str]:
+        """
+        9 November 2026 -- nama Salesperson (res.partner.user_id) per partner,
+        dipakai export progress input stok outlet. Termasuk partner archived
+        (active_test False). Partner tanpa Salesperson tidak ada di dict.
+        """
+        result: dict[int, str] = {}
+        ids = sorted(set(partner_ids))
+        for i in range(0, len(ids), 1000):
+            records = self._execute(
+                "res.partner",
+                "search_read",
+                [[("id", "in", ids[i : i + 1000])]],
+                {"fields": ["id", "user_id"], "context": {"active_test": False}},
+            )
+            for r in records:
+                if r.get("user_id"):  # many2one [id, name]
+                    result[r["id"]] = r["user_id"][1]
+        return result
+
     def get_sales_orders(
         self,
         so_number: str | None = None,
