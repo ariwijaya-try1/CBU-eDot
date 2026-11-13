@@ -138,7 +138,7 @@ class OdooClient:
             {"fields": ["id", "name", "complete_name", "parent_id"]},
         )
 
-    def get_products(self, ids: list | None = None):
+    def get_products(self, ids: list | None = None, include_archived: bool = False):
         """
         Sumber data untuk entity Product di eSuite.
         Model: product.product (BUKAN product.template) -- field 'free_qty'
@@ -153,6 +153,10 @@ class OdooClient:
           "id in ids" -- dipakai buat upsert produk tertentu saja lewat
           external_code (lihat product_sync_service.py), bukan cuma semua
           produk sekaligus. Kosongkan (default None) untuk behavior normal.
+        - include_archived (OPSIONAL, 13 November 2026) -- True = ikut ambil
+          produk archived (context active_test=False). Hanya dipakai
+          deactivate_discontinued() utk membangun payload inactive. Default
+          False = behavior lama (produk archived tidak ikut).
 
         REVISI 5 Agustus 2026: filter free_qty > 0 DIHAPUS (baik di domain
         maupun di post-filter Python). Produk dengan free_qty = 0 tetap
@@ -187,7 +191,8 @@ class OdooClient:
                 "fields": [
                     "id", "name", "default_code", "free_qty", "categ_id",
                     "list_price", "standard_price", "uom_id",
-                ]
+                ],
+                **({"context": {"active_test": False}} if include_archived else {}),
             },
         )
 
@@ -303,6 +308,10 @@ class OdooClient:
             ("location_id.usage", "=", "internal"),
             ("location_id.complete_name", "ilike", "/Stock/"),
             ("product_id.categ_id.complete_name", "ilike", "ALL / SALEABLE"),
+            # 13 November 2026 -- exclude produk DISCONTINUE (= archived di
+            # Odoo). stock.quant tidak punya field 'active', jadi tanpa filter
+            # ini stok produk archived tetap ikut terkirim ke eSuite.
+            ("product_id.active", "=", True),
         ]
         if product_ids:
             conditions.append(("product_id", "in", product_ids))

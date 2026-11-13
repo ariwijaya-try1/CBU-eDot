@@ -83,6 +83,7 @@ def export_outlet_stock_input_progress(
     "Sudah input" = stok >= 1, ada expired, atau baris dibuat user app.
     ⚠️ Isian 0 pada baris pre-fill tanpa expired terhitung BELUM (tidak bisa
     dibedakan).
+    Produk discontinue (di-archive di Odoo) tidak dihitung (13 Nov 2026).
 
     Sheet: Per Sales, Per Outlet, Belum Input (SKU yang belum diisi),
     Detail, Catatan.

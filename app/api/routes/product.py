@@ -28,6 +28,8 @@ def _parse_product_ids(product_id: str) -> list[str]:
     return codes
 
 router = APIRouter()
+# Router terpisah utk Swagger tag "Deactivate" (pola sama branch.py/customer.py).
+deactivate_router = APIRouter()
 service = ProductSyncService()
 
 
@@ -118,5 +120,50 @@ def sync_product(
         batch_size=batch_size,
         external_codes=resolved_external_codes,
         with_variant=with_variant,
+        include_payload=include_payload,
+    )
+
+
+@deactivate_router.post("/deactivate/product")
+def deactivate_product(
+    external_codes: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL -- batasi ke produk tertentu, comma-separated "
+            "(format 'ODOO-PROD-{id}'). Kosongkan = cek SEMUA produk di eSuite. "
+            "Produk yang masih AKTIF di Odoo tidak akan pernah ikut dinonaktifkan."
+        ),
+    ),
+    dry_run: bool = Query(
+        default=True,
+        description=(
+            "Default True = cuma tampilkan daftar produk discontinue (archived "
+            "di Odoo) yang masih aktif di eSuite, TANPA push. Set False utk "
+            "benar-benar menonaktifkan."
+        ),
+    ),
+    batch_size: int | None = Query(
+        default=None,
+        ge=1,
+        description="OPSIONAL -- pecah push jadi beberapa batch. Kosongkan = 1 request.",
+    ),
+    include_payload: bool = Query(
+        default=False,
+        description="OPSIONAL -- True = sertakan payload_sent per batch (debug).",
+    ),
+):
+    """
+    Nonaktifkan Product + variant-nya di eSuite (status: "inactive") utk
+    produk DISCONTINUE = archived di Odoo (product.product.active = False).
+    eSuite tidak bisa hard-delete produk, jadi inactive = "hapus".
+
+    Payload yang dikirim = payload penuh seperti /sync/product, hanya
+    status produk & variant diganti "inactive" (variant existing di-update
+    by id, tidak membuat variant baru).
+    """
+    return service.deactivate_discontinued(
+        external_codes=external_codes,
+        dry_run=dry_run,
+        batch_size=batch_size,
         include_payload=include_payload,
     )

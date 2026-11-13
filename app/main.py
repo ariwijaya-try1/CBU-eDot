@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes.branch import router as branch_router, deactivate_router as branch_deactivate_router
 from app.api.routes.warehouse import router as warehouse_router
 from app.api.routes.product_category import router as product_category_router
-from app.api.routes.product import router as product_router
+from app.api.routes.product import router as product_router, deactivate_router as product_deactivate_router
 from app.api.routes.customer import router as customer_router, deactivate_router as customer_deactivate_router
 from app.api.routes.customer_group import router as customer_group_router
 from app.api.routes.customer_grouping import router as customer_grouping_router
@@ -83,6 +83,7 @@ app.include_router(branch_deactivate_router, prefix="/api", tags=["Deactivate"])
 app.include_router(warehouse_router, prefix="/api", tags=["Sync"])
 app.include_router(product_category_router, prefix="/api", tags=["Sync"])
 app.include_router(product_router, prefix="/api", tags=["Sync"])
+app.include_router(product_deactivate_router, prefix="/api", tags=["Deactivate"])
 app.include_router(customer_router, prefix="/api", tags=["Sync"])
 app.include_router(customer_deactivate_router, prefix="/api", tags=["Deactivate"])
 app.include_router(customer_group_router, prefix="/api", tags=["Sync"])

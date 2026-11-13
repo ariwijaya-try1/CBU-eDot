@@ -199,6 +199,173 @@ class ProductSyncService:
         log_sync_result("product", event, result)
         return result
 
+    def deactivate_discontinued(
+        self,
+        external_codes: str | None = None,
+        dry_run: bool = True,
+        batch_size: int | None = None,
+        include_payload: bool = False,
+    ) -> dict:
+        """
+        13 November 2026 -- nonaktifkan (status "inactive") Product + variant-nya
+        di eSuite utk produk DISCONTINUE (= archived di Odoo, active=False).
+        eSuite tidak bisa hard-delete produk, jadi inactive = "hapus".
+
+        Alur:
+          1. Ambil produk dari eSuite (semua, atau hanya external_codes kalau
+             diisi), external_code format ODOO-PROD-{id}, status belum inactive.
+          2. Cek status di Odoo (get_products_sync_status, termasuk archived).
+             Hanya yang active=False yang diproses -- produk aktif TIDAK
+             pernah ikut dinonaktifkan walau external_code-nya diisi manual.
+          3. dry_run=True (default): cuma laporkan kandidat, tidak push.
+          4. dry_run=False: bangun payload PENUH lewat _to_esuite_payload()
+             (sama persis dgn /sync/product) lalu status produk & variant
+             diganti "inactive". Sengaja payload penuh, bukan minimal: variant
+             embed di-match pakai id, payload variant parsial berisiko
+             mengosongkan field variant (name/sku) di eSuite.
+
+        Produk yang sudah terhapus total dari Odoo / tidak bisa dibangun
+        payload-nya (keluar domain Saleable, list_price 0, kategori/UOM
+        belum ter-map) TIDAK diproses, dilaporkan saja.
+        """
+        # LANGKAH 1 -- produk di eSuite
+        invalid_codes = []
+        if external_codes:
+            codes = {c.strip() for c in external_codes.split(",") if c.strip()}
+            if not codes:
+                raise ValidationError("external_codes diisi tapi kosong")
+            records = list(self.esuite.find_by_external_codes("product", codes).values())
+            not_in_esuite = sorted(codes - {r.get("external_code") for r in records})
+        else:
+            records = self._pull_all_esuite_products()
+            not_in_esuite = []
+
+        record_by_id: dict[int, dict] = {}
+        already_inactive = []
+        for r in records:
+            code = r.get("external_code") or ""
+            suffix = code[len(EXTERNAL_CODE_PREFIX):] if code.startswith(EXTERNAL_CODE_PREFIX) else ""
+            if not suffix.isdigit():
+                invalid_codes.append(code)
+                continue
+            if (r.get("status") or "").lower() == "inactive":
+                already_inactive.append(code)
+                continue
+            record_by_id[int(suffix)] = r
+
+        # LANGKAH 2 -- status Odoo (termasuk archived)
+        status_by_id = self.odoo.get_products_sync_status(sorted(record_by_id))
+        archived_ids = sorted(
+            pid for pid in record_by_id
+            if pid in status_by_id and not status_by_id[pid]["active"]
+        )
+        not_in_odoo = sorted(
+            f"{EXTERNAL_CODE_PREFIX}{pid}" for pid in record_by_id if pid not in status_by_id
+        )
+
+        result = {
+            "dry_run": dry_run,
+            "checked_in_esuite": len(record_by_id),
+            "discontinue_count": len(archived_ids),
+            "discontinue": [
+                {
+                    "external_code": f"{EXTERNAL_CODE_PREFIX}{pid}",
+                    "name": record_by_id[pid].get("name"),
+                }
+                for pid in archived_ids
+            ],
+            "skipped": {
+                "already_inactive": sorted(already_inactive),
+                "not_in_odoo": not_in_odoo,
+                "not_in_esuite": not_in_esuite,
+                "invalid_external_code": sorted(invalid_codes),
+            },
+        }
+        if dry_run or not archived_ids:
+            return result
+
+        # LANGKAH 4 -- bangun payload penuh, lalu set inactive
+        products = self.odoo.get_products(ids=archived_ids, include_archived=True)
+        built_ids = {p["id"] for p in products}
+        not_buildable = [
+            {"external_code": f"{EXTERNAL_CODE_PREFIX}{pid}",
+             "reason": "keluar domain Saleable / list_price 0 di Odoo"}
+            for pid in archived_ids if pid not in built_ids
+        ]
+
+        # id variant existing langsung dari record eSuite langkah 1 (tanpa
+        # pull ulang). Produk tanpa variant -> payload tanpa "variants"
+        # (jangan sampai bikin variant baru utk produk yang dinonaktifkan).
+        existing_variant_ids = {}
+        for pid in built_ids:
+            code = f"{EXTERNAL_CODE_PREFIX}{pid}"
+            for v in record_by_id[pid].get("variants") or []:
+                if v.get("external_code") == code and v.get("id"):
+                    existing_variant_ids[code] = v["id"]
+                    break
+
+        category_id_map = self._resolve_category_ids(products) if products else {}
+        payload = []
+        for p in products:
+            code = f"{EXTERNAL_CODE_PREFIX}{p['id']}"
+            try:
+                item = self._to_esuite_payload(
+                    p, category_id_map, code in existing_variant_ids, existing_variant_ids
+                )
+            except ValidationError as e:
+                not_buildable.append({"external_code": code, "reason": e.to_dict()["error"]})
+                continue
+            item["status"] = "inactive"
+            for v in item.get("variants") or []:
+                v["status"] = "inactive"
+            payload.append(item)
+
+        size = batch_size or len(payload) or 1
+        batches = [payload[i : i + size] for i in range(0, len(payload), size)]
+        batch_results = []
+        deactivated_count = 0
+        failed_count = 0
+        for idx, batch in enumerate(batches, start=1):
+            entry = {
+                "batch": idx,
+                "size": len(batch),
+                "external_codes": [item["external_code"] for item in batch],
+            }
+            try:
+                entry["esuite_response"] = self.esuite.push("product", event="upsert", data=batch)
+                entry["status"] = "success"
+                deactivated_count += len(batch)
+            except AppError as e:
+                entry["status"] = "failed"
+                entry["error"] = e.to_dict()["error"]
+                failed_count += len(batch)
+            if include_payload:
+                entry["payload_sent"] = batch
+            batch_results.append(entry)
+
+        result.update({
+            "deactivated_count": deactivated_count,
+            "failed_count": failed_count,
+            "with_variant_count": sum(1 for item in payload if item.get("variants")),
+            "not_buildable": not_buildable,
+            "batches": batch_results,
+        })
+        log_sync_result("product_deactivate", "upsert", result)
+        return result
+
+    def _pull_all_esuite_products(self) -> list[dict]:
+        """Full pull GET /product semua halaman (pola sama stock_sync_service)."""
+        records = []
+        page = 1
+        while True:
+            pulled = self.esuite.pull("product", page=page, limit=200)
+            records.extend(pulled.get("data") or [])
+            total_page = (pulled.get("meta") or {}).get("total_page", 1)
+            if page >= total_page:
+                break
+            page += 1
+        return records
+
     def _parse_external_codes(self, external_codes: str) -> list[int]:
         """
         Parse "ODOO-PROD-123,ODOO-PROD-456" -> [123, 456] -- dipakai fitur

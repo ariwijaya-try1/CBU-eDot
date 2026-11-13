@@ -95,15 +95,17 @@ class EsuiteClient:
         response = self._safe_request("POST", url, data=raw_body, headers=headers)
         return self._handle_response(response, request_id)
 
-    def pull(self, entity_path: str, page: int = 1, limit: int = 100) -> dict:
-        """GET (pull) reference/master data dari eSuite. Body kosong -> sign string kosong."""
+    def pull(self, entity_path: str, page: int = 1, limit: int = 100, timeout=None) -> dict:
+        """GET (pull) reference/master data dari eSuite. Body kosong -> sign string kosong.
+        timeout opsional (12 Nov 2026): override timeout default 30 detik, mis. GET stock-matrix
+        yang mengabaikan limit & balas semua baris sekaligus."""
         raw_body = b""
         request_id = uuid.uuid4().hex
         headers = self._headers(raw_body, request_id)
 
         url = f"{self.base_url}/{entity_path}"
         response = self._safe_request(
-            "GET", url, headers=headers, params={"page": page, "limit": limit}
+            "GET", url, headers=headers, params={"page": page, "limit": limit}, timeout=timeout
         )
         return self._handle_response(response, request_id)
 
@@ -213,14 +215,15 @@ class EsuiteClient:
 
         return found
 
-    def _safe_request(self, method: str, url: str, **kwargs) -> requests.Response:
+    def _safe_request(self, method: str, url: str, timeout=None, **kwargs) -> requests.Response:
         """
         Bungkus request supaya kegagalan koneksi (DNS gagal, timeout, host
         nggak reachable) muncul sebagai EsuiteConnectionError yang jelas --
         bukan crash 500 generic tanpa konteks.
         """
         try:
-            return self.session.request(method, url, timeout=30, **kwargs)
+            # timeout None = default lama 30 detik (behavior existing tidak berubah)
+            return self.session.request(method, url, timeout=timeout or 30, **kwargs)
         except requests.ConnectionError as e:
             raise EsuiteConnectionError(
                 message=f"Gagal konek ke eSuite ({url}) -- cek DNS/network/host sandbox",
