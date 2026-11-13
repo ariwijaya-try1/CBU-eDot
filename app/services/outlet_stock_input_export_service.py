@@ -90,6 +90,7 @@ class OutletStockInputExportService:
     def __init__(self):
         self.esuite = EsuiteClient()
         self.odoo = OdooClient()
+        self._employee_labels: dict[str, str] | None = None  # cache login -> nama employee eSuite
 
     def build(self, external_codes: list[str] | None = None) -> tuple[bytes, str]:
         """Return (isi file .xlsx, nama file)."""
@@ -150,7 +151,7 @@ class OutletStockInputExportService:
                 who = (_user(row.get("updated_by_name")) or _user(row.get("updated_by"))
                        or _user(row.get("created_by_name")) or _user(row.get("created_by")))
                 if who:
-                    item["by"].add(who)
+                    item["by"].add(self._employee_label(who))
 
         # 3b. 13 Nov 2026 -- produk discontinue (archived di Odoo) tidak dihitung
         archived = self._archived_variant_ids({key for items in products.values() for key in items})
@@ -200,6 +201,25 @@ class OutletStockInputExportService:
         content = self._workbook(rows, wanted)
         filename = f"progress_input_stok_outlet_{datetime.now(WITA):%Y%m%d_%H%M}.xlsx"
         return content, filename
+
+    def _employee_label(self, login: str) -> str:
+        """13 Nov 2026 (permintaan user): login app eWork (mis. "Salesman_3") -> nama employee
+        eSuite (mis. "MT02 Winaya"). Dicocokkan ke GET /employee: username, atau bagian email
+        sebelum "@" (Salesman_3@yopmail.com). Tidak ketemu / GET gagal -> login apa adanya."""
+        if self._employee_labels is None:
+            self._employee_labels = {}
+            try:
+                for emp in self._pull_all("employee"):
+                    name = str(emp.get("name") or "").strip()
+                    if not name:
+                        continue
+                    keys = {str(emp.get("username") or "").strip().lower(),
+                            str(emp.get("email") or "").split("@")[0].strip().lower()}
+                    for key in keys - {""}:
+                        self._employee_labels.setdefault(key, name)
+            except Exception:  # label saja -- export tetap jalan
+                pass
+        return self._employee_labels.get(login.strip().lower(), login)
 
     @staticmethod
     def _is_user_row(row: dict) -> bool:
