@@ -148,19 +148,33 @@ class StockSyncService:
                 stock_rows = stock_rows[:limit]
             rows_by_warehouse[wh["id"]] = stock_rows
 
+        # id yang confirmed ADA di eSuite (langkah 1) tapi TIDAK ketemu di query
+        # stok Odoo langkah 2. 14 November 2026 -- dipecah 2 kategori:
+        # - skipped_archived: produk DISCONTINUE (archived di Odoo), sengaja
+        #   tidak dikirim (filter product_id.active di get_stock_by_warehouse).
+        # - skipped_not_found_in_odoo: sisanya -- keluar domain Saleable,
+        #   terhapus dari Odoo, atau belum ada stok di lokasi "/Stock/".
+        # Status dicek 1 RPC (active_test=False), hanya kalau ada yang di-skip.
+        missing_ids = sorted(set(verified_ids) - found_ids)
+        status_by_id = self.odoo.get_products_sync_status(missing_ids) if missing_ids else {}
+        archived_ids = {
+            pid for pid in missing_ids
+            if pid in status_by_id and not status_by_id[pid]["active"]
+        }
+        skipped_archived = [f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}" for pid in missing_ids if pid in archived_ids]
+        skipped_not_found_in_odoo = [
+            f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}" for pid in missing_ids if pid not in archived_ids
+        ]
+
         if total_matched == 0:
             raise ValidationError(
-                "Produk sudah confirmed punya product-variant di eSuite, tapi tidak ketemu datanya "
-                "di Odoo (category Saleable / mungkin sudah di-archive) -- cek lagi id-nya"
+                "Produk sudah confirmed punya product-variant di eSuite, tapi tidak ada stok yang "
+                "bisa dikirim dari Odoo -- lihat details (skipped_archived = produk discontinue)",
+                details={
+                    "skipped_archived": skipped_archived,
+                    "skipped_not_found_in_odoo": skipped_not_found_in_odoo,
+                },
             )
-
-        # skipped_not_found_in_odoo -- id yang confirmed ADA di eSuite (langkah 1)
-        # tapi TERNYATA tidak ketemu di query stok Odoo langkah 2 (misal produk
-        # sudah di-archive/keluar domain Saleable di Odoo setelah variant-nya
-        # sempat di-push). Kasus jarang, tapi dicatat buat visibility -- bukan error.
-        skipped_not_found_in_odoo = sorted(
-            f"{PRODUCT_EXTERNAL_CODE_PREFIX}{pid}" for pid in set(verified_ids) - found_ids
-        )
 
         payload = [
             self._to_esuite_payload(row, wh)
@@ -218,6 +232,7 @@ class StockSyncService:
             "verified_in_esuite": len(verified_ids),
             "total_matched_in_odoo": total_matched,
             "total_sent": len(payload),
+            "skipped_archived": skipped_archived,
             "skipped_not_found_in_odoo": skipped_not_found_in_odoo,
             "batch_size": size,
             "batch_count": len(batches),
@@ -226,10 +241,12 @@ class StockSyncService:
             "batches": batch_results,
         }
 
-        note = (
-            f"{len(skipped_not_found_in_odoo)} produk verified di eSuite tapi tidak ketemu di Odoo"
-            if skipped_not_found_in_odoo
-            else ""
+        note = "; ".join(
+            part for part in (
+                f"{len(skipped_archived)} produk discontinue (archived) di-skip" if skipped_archived else "",
+                f"{len(skipped_not_found_in_odoo)} produk verified di eSuite tapi tidak ketemu di Odoo"
+                if skipped_not_found_in_odoo else "",
+            ) if part
         )
         log_sync_result("stock-matrix", event, result, note=note)
         return result

@@ -75,8 +75,10 @@ def sync_stock_matrix(
     produk yang punya product-variant valid ter-embed) sebelum nyentuh Odoo
     sama sekali -- baru query stok Odoo SPESIFIK ke produk yang ketemu.
     Response include "verified_in_esuite" (jumlah produk yang lolos guard)
-    & "skipped_not_found_in_odoo" (produk yang verified di eSuite tapi
-    ternyata gak ketemu di query stok Odoo, mis. sudah di-archive). Butuh
+    & "skipped_archived" (produk discontinue = archived di Odoo, stok
+    sengaja tidak dikirim) & "skipped_not_found_in_odoo" (produk verified
+    di eSuite tapi tidak ketemu di query stok Odoo karena alasan lain:
+    keluar Saleable / terhapus / belum ada stok di "/Stock/"). Butuh
     Product & Product Variant sudah ke-push duluan (POST /sync/product
     dengan with_variant=True) untuk produk yang mau di-sync stoknya.
     """
