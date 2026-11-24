@@ -75,6 +75,13 @@ class MassCustomerSalesMappingService:
       record yang sama, dipakai `_branch_ids_of()`) -- BELUM eksplisit
       diverifikasi live utk field spesifik ini, cek response nyata pas
       dry_run pertama pasca update ini.
+
+    UPDATE 20 November 2026 -- `mode="remove"` (unmap salesman tertentu):
+    salesman_ids DIBUANG dari salesmans[] tiap customer yang memuatnya,
+    salesman lain tetap. TANPA filter branch (customer branch apa pun).
+    Customer yang salesmans[]-nya jadi KOSONG TIDAK di-push -- API eSuite
+    tidak bisa mengosongkan relasi (vendor, 25 Agustus 2026) -> dilaporkan di
+    `needs_ui_unmap` utk dihapus manual lewat UI eSuite.
     """
 
     def __init__(self):
@@ -87,10 +94,11 @@ class MassCustomerSalesMappingService:
         limit: int | None = None,
         dry_run: bool = False,
         batch_size: int | None = None,
+        external_codes: str | None = None,
     ) -> dict:
-        if mode not in ("add", "reset"):
+        if mode not in ("add", "reset", "remove"):
             raise ValidationError(
-                "mode harus 'add' atau 'reset'",
+                "mode harus 'add', 'reset' atau 'remove'",
                 details={"mode": mode},
             )
 
@@ -98,7 +106,8 @@ class MassCustomerSalesMappingService:
         if not sid_list:
             raise ValidationError("salesman_ids wajib diisi minimal 1")
 
-        resolved_salesmen = self._resolve_salesmen(sid_list)
+        # remove: salesman tidak wajib punya branch (cuma dibuang dari customer)
+        resolved_salesmen = self._resolve_salesmen(sid_list, require_branches=(mode != "remove"))
         # Union SEMUA branch dari salesman yang diminta -- dipakai cuma buat
         # laporan/ringkasan di response, BUKAN dipakai langsung filter
         # eligibility (filter sebenarnya PER-CUSTOMER, lihat loop bawah).
@@ -107,13 +116,65 @@ class MassCustomerSalesMappingService:
             all_requested_branch_ids |= r["branch_ids"]
 
         all_customers = self._pull_all_customers()
+
+        # 20 Nov 2026: filter opsional ke customer tertentu (mis. outlet 1 slot
+        # Odoo utk akun mirror testing). Code yang tidak ada di eSuite TIDAK
+        # di-push (tidak membuat customer baru) -> dilaporkan.
+        not_found_codes: list[str] = []
+        if external_codes:
+            wanted = [c.strip() for c in external_codes.split(",") if c.strip()]
+            wanted_set = set(wanted)
+            all_customers = [r for r in all_customers if (r.get("external_code") or "") in wanted_set]
+            found = {r.get("external_code") for r in all_customers}
+            not_found_codes = [c for c in wanted if c not in found]
         total_customers = len(all_customers)
 
         eligible_codes: list[str] = []
         payload_by_code: dict[str, dict] = {}
         skipped: list[dict] = []
+        needs_ui_unmap: list[dict] = []  # mode=remove: sisa salesmans kosong
+        not_mapped_count = 0  # mode=remove: customer tanpa salesman target
+        remove_ids = {r["internal"]["id"] for r in resolved_salesmen if r["internal"]["id"]}
         for record in all_customers:
             external_code = record.get("external_code") or ""
+
+            # 20 Nov 2026: customer tanpa external_code (dibuat manual/NOO di
+            # eSuite) TIDAK di-push -- upsert pakai key "" berisiko salah
+            # record/buat record baru. Ubah manual lewat UI eSuite.
+            if not external_code:
+                skipped.append(
+                    {
+                        "external_code": "",
+                        "reason": "no_external_code",
+                        "esuite_id": record.get("id") or "",
+                        "name": record.get("name") or "",
+                    }
+                )
+                continue
+
+            if mode == "remove":
+                existing_salesmen = self._salesmans_of(record)
+                remaining = [s for s in existing_salesmen if s.get("id") not in remove_ids]
+                if len(remaining) == len(existing_salesmen):
+                    not_mapped_count += 1
+                    continue
+                if not remaining:
+                    # API tidak bisa kosongkan salesmans[] -> hapus manual di UI
+                    needs_ui_unmap.append(
+                        {
+                            "external_code": external_code,
+                            "name": record.get("name") or "",
+                            "salesmans": [s.get("name") for s in existing_salesmen],
+                        }
+                    )
+                    continue
+                eligible_codes.append(external_code)
+                payload_by_code[external_code] = {
+                    "external_code": external_code,
+                    "sales": {"salesmans": remaining},
+                }
+                continue
+
             customer_branch_ids = self._branch_ids_of(record)
 
             if not customer_branch_ids:
@@ -185,6 +246,12 @@ class MassCustomerSalesMappingService:
             "skipped": skipped,
             "dry_run": dry_run,
         }
+        if external_codes:
+            result["external_codes_not_found"] = not_found_codes
+        if mode == "remove":
+            result["not_mapped_count"] = not_mapped_count
+            result["needs_ui_unmap_count"] = len(needs_ui_unmap)
+            result["needs_ui_unmap"] = needs_ui_unmap
 
         if dry_run:
             # dry_run -- TIDAK ADA push ke eSuite sama sekali, cuma preview
@@ -235,7 +302,7 @@ class MassCustomerSalesMappingService:
         return result
 
     # ------------------------------------------------------------------
-    def _resolve_salesmen(self, sid_list: list[str]) -> list[dict]:
+    def _resolve_salesmen(self, sid_list: list[str], require_branches: bool = True) -> list[dict]:
         """
         Resolve BANYAK salesman_id (employee_id) -> list [{"internal":
         {"id","name"}, "branch_ids": set}, ...], urutan sama dengan
@@ -265,7 +332,7 @@ class MassCustomerSalesMappingService:
             branch_ids = {
                 b.get("id") for b in (record.get("branches") or []) if b.get("id")
             }
-            if not branch_ids:
+            if not branch_ids and require_branches:
                 raise ValidationError(
                     f"Salesman '{sid}' tidak punya branches[] di response GET "
                     "/employee (atau field 'branches' tidak ada/nama beda -- BELUM "

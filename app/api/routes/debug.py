@@ -5,6 +5,7 @@ from app.services import (
     customer_group_sync_service,
     customer_sync_service,
     customer_upsert_geo_branch_sales_service,
+    outlet_stock_snapshot_service,
     pricelist_sync_service,
     product_sync_service,
 )
@@ -201,3 +202,41 @@ def verify_reference_constants():
             "not_verified": NOT_VERIFIED_CONSTANTS,
         },
     }
+
+
+# 17 Nov 2026 -- cari id warehouse (outlet/internal) by nama, utk param warehouse_id snapshot.
+@router.get("/debug/outlet-stock/warehouse")
+def outlet_stock_warehouse_by_name(
+    name: str = Query(..., min_length=2, max_length=100, description="nama warehouse/outlet, case-insensitive, cukup sebagian (mis. BINTANG UBUD)"),
+):
+    """Read-only. Cari warehouse eSuite yang namanya MENGANDUNG `name` -> id, external_code, type, customer_id (address.id)."""
+    return outlet_stock_snapshot_service.find_warehouses(name, client)
+
+
+# 17 Nov 2026 -- snapshot/diff Product Stock outlet (TEST_PLAN_outlet_stock.md Tahap 9).
+# Read-only; uji perilaku created_by/updated_by eSuite saat sales ubah stok di eWork.
+@router.get("/debug/outlet-stock/snapshot")
+def outlet_stock_snapshot(
+    warehouse_id: str = Query(..., description="id warehouse outlet eSuite, mis. 6ac9af90a09dadab026a3445 (BINTANG UBUD)"),
+    products: str | None = Query(default=None, description="OPSIONAL -- kode MPV, pisah koma. Kosong = semua produk outlet."),
+    label: str | None = Query(
+        default=None,
+        description="OPSIONAL -- simpan ke logs/stock_snapshot_<label>.json (huruf/angka/_/-), mis. A_before. Label sama = ditimpa.",
+    ),
+):
+    """
+    Ambil baris stok 1 warehouse outlet dari GET stock-matrix?warehouse_id=, ringkas per baris:
+    batch, on_hand, created_by/_name, updated_by/_name, created_at/updated_at (WITA) dan
+    objectid_time (waktu ASLI baris dibuat, dari id). Isi `label` supaya bisa dibandingkan
+    lewat /debug/outlet-stock/snapshot-diff. Tidak mengubah data.
+    """
+    return outlet_stock_snapshot_service.snapshot(warehouse_id, products, label, client)
+
+
+@router.get("/debug/outlet-stock/snapshot-diff")
+def outlet_stock_snapshot_diff(
+    before: str = Query(..., description="label snapshot sebelum aksi di eWork, mis. A_before"),
+    after: str = Query(..., description="label snapshot sesudah aksi di eWork, mis. A_after"),
+):
+    """Bandingkan 2 snapshot tersimpan: new_rows, changed_rows (field before/after), removed_rows."""
+    return outlet_stock_snapshot_service.diff(before, after)

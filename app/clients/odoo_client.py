@@ -1113,7 +1113,7 @@ class OdooClient:
         return orders
 
     def get_purchased_product_ids_by_customer(
-        self, customer_ids: list[int], invoice_statuses: list[str]
+        self, customer_ids: list[int], invoice_statuses: list[str], date_from: str | None = None
     ) -> dict[int, dict]:
         """
         5 Oktober 2026 -- produk yang PERNAH DIBELI tiap customer (riwayat
@@ -1131,16 +1131,23 @@ class OdooClient:
         Caller yang membatasi jumlah customer_ids per panggilan (chunk) --
         method ini cuma memecah order_ids supaya 1 RPC tidak terlalu besar.
 
+        date_from (OPSIONAL, 19 November 2026): "YYYY-MM-DD" -- hanya order
+        dgn date_order >= tanggal itu. date_order disimpan UTC di Odoo.
+
         Return: {customer_id: {"name": str, "product_ids": [int, ...]}} --
         customer tanpa order eligible TIDAK ada di dict hasil.
         """
         if not customer_ids:
             return {}
 
+        domain = [("partner_id", "in", customer_ids), ("invoice_status", "in", invoice_statuses)]
+        if date_from:
+            domain.append(("date_order", ">=", date_from))
+
         orders = self._execute(
             "sale.order",
             "search_read",
-            [[("partner_id", "in", customer_ids), ("invoice_status", "in", invoice_statuses)]],
+            [domain],
             {"fields": ["id", "partner_id"]},
         )
         if not orders:
@@ -1228,6 +1235,30 @@ class OdooClient:
             for r in records:
                 if r.get("user_id"):  # many2one [id, name]
                     result[r["id"]] = r["user_id"][1]
+        return result
+
+    def get_partner_company_and_salesperson(self, partner_ids: list[int]) -> dict[int, dict]:
+        """
+        23 November 2026 -- per partner: {"company": nama res.partner.company_id
+        ("" kalau kosong), "user_id": id Salesperson (None kalau kosong)}.
+        Dipakai filter company & salesperson export progress input stok outlet.
+        Termasuk partner archived.
+        """
+        result: dict[int, dict] = {}
+        ids = sorted(set(partner_ids))
+        for i in range(0, len(ids), 1000):
+            records = self._execute(
+                "res.partner",
+                "search_read",
+                [[("id", "in", ids[i : i + 1000])]],
+                {"fields": ["id", "company_id", "user_id"], "context": {"active_test": False}},
+            )
+            for r in records:  # many2one = [id, name] atau False
+                result[r["id"]] = {
+                    "company": r["company_id"][1] if r.get("company_id") else "",
+                    "user_id": r["user_id"][0] if r.get("user_id") else None,
+                    "user_name": r["user_id"][1] if r.get("user_id") else "",  # 23 Nov: filter employee_id eSuite
+                }
         return result
 
     def get_sales_orders(

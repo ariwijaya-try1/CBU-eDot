@@ -189,3 +189,19 @@ timestamp,entity,event,total_matched_in_odoo,synced_count,failed_count,batch_cou
 2026-11-06T02:21:02.265569+00:00,call_plan,upsert,6,6,0,,success,,"2026-11-06..2026-11-06 slots=[SALES] BAL MT01,[SALES] BAL MT01"
 2026-11-09T07:02:44.306468+00:00,outlet_stock,upsert,430,9262,110,188,partial,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 320 customer, 9372 item, 112 sudah berisi stok, 0 gagal dikembalikan, 110 customer di-skip, 265 produk di-skip, 188 batch @ max 50 item"
 2026-11-11T01:23:23.289276+00:00,product,upsert,1357,1,0,1,success,,
+2026-11-14T03:42:41.364558+00:00,product_deactivate,upsert,,,0,,success,,
+2026-11-17T08:24:48.045230+00:00,outlet_stock_discontinue,delete,4,4,0,1,success,,"1 customer, 4 baris"
+2026-11-20T05:31:40.558117+00:00,outlet_stock,upsert,1,18,0,1,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 1 customer, 18 item, 0 sudah berisi stok, 0 gagal dikembalikan, 0 customer di-skip, 3 produk di-skip, 1 batch @ max 50 item"
+2026-11-20T06:13:26.484032+00:00,outlet_stock,upsert,2,9,0,1,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 1 customer, 9 item, 0 sudah berisi stok, 0 gagal dikembalikan, 1 customer di-skip, 0 produk di-skip, 1 batch @ max 50 item"
+2026-11-20T06:52:31.636211+00:00,outlet_stock,upsert,1,15,0,1,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 1 customer, 15 item, 0 sudah berisi stok, 0 gagal dikembalikan, 0 customer di-skip, 0 produk di-skip, 1 batch @ max 50 item"
+2026-11-20T06:59:34.209560+00:00,outlet_stock,upsert,77,1079,1,22,partial,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 46 customer, 1080 item, 210 sudah berisi stok, 0 gagal dikembalikan, 31 customer di-skip, 68 produk di-skip, 22 batch @ max 50 item"
+2026-11-20T12:20:09.965206+00:00,call_plan,upsert,15,15,0,,success,,2026-11-23..2026-11-29 slots=[SALES] JKT MT01
+2026-11-20T12:20:44.025463+00:00,call_plan,upsert,15,15,0,,success,,2026-11-23..2026-11-29 slots=[SALES] JKT MT01
+2026-11-20T12:51:57.407565+00:00,stock-matrix,upsert,1122,1122,0,1,success,,81 produk discontinue (archived) di-skip; 511 produk verified di eSuite tapi tidak ketemu di Odoo
+2026-11-20T13:10:57.893848+00:00,outlet_stock,upsert,41,26,4,1,partial,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 5 customer, 30 item, 0 sudah berisi stok, 0 gagal dikembalikan, 36 customer di-skip, 0 produk di-skip, 1 batch @ max 50 item"
+2026-11-23T01:15:26.648197+00:00,outlet_stock,upsert,86,1247,2,25,partial,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 46 customer, 1249 item, 118 sudah berisi stok, 0 gagal dikembalikan, 40 customer di-skip, 62 produk di-skip, 25 batch @ max 50 item"
+2026-11-23T01:34:09.360478+00:00,call_plan,upsert,13,13,0,,success,,"2026-11-23..2026-11-23 slots=[SALES] JKT MT01,[SALES] JKT MT02,[SALES] JKT MT03,[SALES] JKT MT04"
+2026-11-23T01:38:55.080197+00:00,outlet_stock,upsert,468,6285,0,126,success,,"store-stock (kirim 0, kembalikan yang sudah berisi) -- 247 customer, 6285 item, 543 sudah berisi stok, 0 gagal dikembalikan, 221 customer di-skip, 125 produk di-skip, 126 batch @ max 50 item"
+2026-11-23T03:44:35.798196+00:00,call_plan,upsert,1,1,0,,success,,2026-11-23..2026-11-23 slots=[SALES] JKT MT03
+2026-11-24T01:36:00.736845+00:00,call_plan,upsert,293,293,0,,success,,"2026-11-01..2026-11-30 slots=[SALES] JKT MT01,[SALES] JKT MT02,[SALES] JKT MT03,[SALES] JKT MT04"
+2026-11-24T01:39:09.663943+00:00,call_plan,upsert,1746,1746,0,,success,,"2026-11-01..2026-11-30 slots=[SALES] BAL GT02,[SALES] BAL GT01,[SALES] BAL MT04,[SALES] BAL MT03,[SALES] BAL MT02,[SALES] BAL MT01,[SALES] BAL MT01"

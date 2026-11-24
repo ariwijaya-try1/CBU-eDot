@@ -5,6 +5,7 @@ from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.admin_area import AdminAreaResolver
 from app.core.exceptions import AppError, ValidationError
+from app.core.scope import esuite_customer_name
 from app.core.sync_logger import log_sync_result, write_customer_upsert_csv
 
 # Currency -- sama dengan yang dipakai product_sync_service.py (IDR, satu-satunya
@@ -812,7 +813,8 @@ class CustomerSyncService:
         admin_area_map: dict[int, list[dict]] | None = None,
     ) -> dict:
         payload = {
-            "name": customer["name"],
+            # 20 Nov 2026: + penanda company, mis. "(SFC)" -- lihat core/scope.py
+            "name": esuite_customer_name(customer["name"], customer.get("company_id")),
             # external_code = key upsert/delete di eSuite -- prefix "ODOO-PARTNER-"
             # konsisten dengan pola prefix entity lain (ODOO-COMPANY-, ODOO-PROD-).
             "external_code": f"ODOO-PARTNER-{customer['id']}",

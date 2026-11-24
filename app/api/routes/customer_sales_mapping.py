@@ -12,11 +12,21 @@ class MappingMode(str, Enum):
     add = "add"
 
 
+# 24 Nov 2026 (permintaan user): pilihan branch di Swagger (multi-select) = kode + nama.
+# Id res.company terkonfirmasi live GET /odoo/branch 24 Sep 2026 (company_scope).
+# Value = "<kode> | <nama>" supaya nama tampil di select box; yang dikirim ke service hanya kodenya.
+BRANCH_CHOICES = {
+    "ODOO-COMPANY-1": "Cahaya Boga Utama, CV",
+    "ODOO-COMPANY-2": "Sunshine Food and Co, CV",
+    "ODOO-COMPANY-3": "Sunshine Agri Pratama, CV",
+    "ODOO-COMPANY-4": "Sunshine Boga Utama, PT",
+}
+BranchChoice = Enum("BranchChoice", {code: f"{code} | {name}" for code, name in BRANCH_CHOICES.items()}, type=str)
+
 router = APIRouter()
-# Router terpisah -- endpoint un-map ke-grup di Swagger tag "Un-Map" sendiri
-# (bukan numpuk di "Mapping"), didaftarkan terpisah di main.py. Pola SAMA
-# dengan deactivate_router (branch.py/customer.py/salesman_division.py).
-unmap_router = APIRouter()
+# 20 Nov 2026: endpoint POST /unmap/customer-sales (unmap_router) DIHAPUS --
+# vendor konfirmasi (25 Agu) clear branchs/salesmans tidak bisa lewat API.
+# Unmap salesman tertentu: POST /mapping/mass-customer-sales mode=remove.
 service = CustomerSalesMappingService()
 
 
@@ -30,12 +40,12 @@ def map_customer_sales(
             "Diterima APA ADANYA (TIDAK divalidasi format)."
         ),
     ),
-    branch_external_codes: str = Query(
+    branch_external_codes: list[BranchChoice] = Query(
         ...,
         description=(
-            "WAJIB -- external_code Branch (format 'ODOO-COMPANY-{id}', SAMA "
-            "dengan /sync/branch), comma-separated kalau >1 branch. id+name "
-            "eSuite di-RESOLVE OTOMATIS lewat pull GET /branches."
+            "WAJIB -- pilih 1-4 branch (multi-select, Ctrl/Cmd+klik utk >1). "
+            "Format 'ODOO-COMPANY-{id}' (SAMA dgn /sync/branch); id+name eSuite "
+            "di-RESOLVE OTOMATIS lewat pull GET /branches."
         ),
     ),
     salesman_ids: str = Query(
@@ -105,50 +115,8 @@ def map_customer_sales(
     """
     return service.map_to_sales(
         external_codes=external_codes,
-        branch_external_codes=branch_external_codes,
+        branch_external_codes=",".join(b.value.split(" | ")[0] for b in branch_external_codes),
         salesman_ids=salesman_ids,
         salesman_names=salesman_names,
         mode=mode.value,  # Enum -> str polos, service tetap terima str seperti semula
     )
-
-
-@unmap_router.post("/unmap/customer-sales")
-def unmap_customer_sales(
-    external_codes: str = Query(
-        ...,
-        description=(
-            "WAJIB -- external_code Customer di eSuite yang mau dihapus "
-            "mapping branch+salesman-nya, comma-separated. Diterima APA "
-            "ADANYA (TIDAK divalidasi format)."
-        ),
-    ),
-    clear_value: str = Query(
-        default="null",
-        pattern="^(null|empty_array)$",
-        description=(
-            "DIAGNOSTIK (25 Agustus 2026) -- cara mengosongkan "
-            "branchs/salesmans di payload: 'null' (default, best-guess baru "
-            "krn array kosong '[]' TERBUKTI diabaikan eSuite -- lihat RALAT "
-            "di service) atau 'empty_array' (perilaku lama, buat "
-            "dibandingkan). Ganti-ganti nilai ini utk cari tau mana yang "
-            "beneran jalan, TANPA perlu ubah kode."
-        ),
-    ),
-):
-    """
-    Hapus/kosongkan mapping Branch DAN Salesman dari Customer SEKALIGUS --
-    kebalikan dari POST /mapping/customer-sales.
-
-    RALAT 25 Agustus 2026 (temuan testing user): kirim array kosong
-    (`sales.branchs: []`/`sales.salesmans: []`) TERNYATA diabaikan eSuite
-    (diperlakukan sama seperti field tidak dikirim -- mapping lama TETAP
-    ada). Default sekarang kirim `null`, BELUM dikonfirmasi vendor pasti
-    berhasil -- gunakan `clear_value` utk test cepat lewat Swagger.
-
-    TIDAK ADA opsi unmap branch/salesman secara terpisah -- info dev eSuite
-    (22 Agustus 2026): branchs & salesmans di dalam object `sales` saling
-    ikut ke-reset kalau salah satu di-set tanpa yang lain, jadi mengosongkan
-    salah satu otomatis mengosongkan keduanya. Field Customer lain
-    (name/addresses/invoice/dst) TIDAK ikut dikirim/direset.
-    """
-    return service.unmap_from_sales(external_codes=external_codes, clear_value=clear_value)

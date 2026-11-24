@@ -29,3 +29,27 @@ IN_SCOPE_COMPANY_NAMES = [
     "Sunshine Agri Pratama",
     "Sunshine Boga Utama",
 ]
+
+
+# 20 November 2026 (keputusan user) -- penanda nama Customer di eSuite per company.
+# Outlet fisik yang sama bisa terdaftar di CBU & SFC (formasi barang beda: NPWP /
+# non-NPWP) dan sales WAJIB visit + isi checklist keduanya -> nama di eWork
+# dibedakan. Hanya nama di eSuite; data Odoo TIDAK diubah. Match company pakai
+# substring case-insensitive, pola sama IN_SCOPE_COMPANY_NAMES.
+CUSTOMER_NAME_SUFFIX_BY_COMPANY = {
+    "Sunshine Food and Co": "(SFC)",
+}
+
+
+def esuite_customer_name(name, company) -> str:
+    """Nama res.partner Odoo -> nama Customer eSuite (+ penanda company kalau ada).
+
+    company = nilai Many2one company_id Odoo ([id, "Nama"] atau False).
+    Idempoten: suffix tidak ditambah dua kali kalau nama Odoo sudah memuatnya.
+    """
+    company_name = company[1] if isinstance(company, (list, tuple)) and len(company) > 1 else ""
+    for key, suffix in CUSTOMER_NAME_SUFFIX_BY_COMPANY.items():
+        if key.lower() in str(company_name).lower():
+            base = (name or "").strip()
+            return base if base.endswith(suffix) else f"{base} {suffix}"
+    return name

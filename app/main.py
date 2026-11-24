@@ -8,7 +8,7 @@ from app.api.routes.product import router as product_router, deactivate_router a
 from app.api.routes.customer import router as customer_router, deactivate_router as customer_deactivate_router
 from app.api.routes.customer_group import router as customer_group_router
 from app.api.routes.customer_grouping import router as customer_grouping_router
-from app.api.routes.customer_sales_mapping import router as customer_sales_mapping_router, unmap_router as customer_sales_unmap_router
+from app.api.routes.customer_sales_mapping import router as customer_sales_mapping_router
 from app.api.routes.customer_pricelist_mapping import router as customer_pricelist_mapping_router
 from app.api.routes.customer_geolocation import router as customer_geolocation_router
 from app.api.routes.customer_upsert_geo_branch_sales import router as customer_upsert_geo_branch_sales_router
@@ -19,7 +19,7 @@ from app.api.routes.salesman_division import router as salesman_division_router,
 from app.api.routes.odoo_get import router as odoo_get_router
 from app.api.routes.debug import router as debug_router
 from app.api.routes.order_history import router as order_history_router
-from app.api.routes.outlet_stock import router as outlet_stock_router
+from app.api.routes.outlet_stock import router as outlet_stock_router, deactivate_router as outlet_stock_deactivate_router
 from app.api.routes.call_plan import router as call_plan_router
 from app.api.routes.compare import router as compare_router
 from app.api.routes.export import router as export_router
@@ -93,7 +93,6 @@ app.include_router(customer_pricelist_mapping_router, prefix="/api", tags=["Mapp
 app.include_router(customer_upsert_geo_branch_sales_router, prefix="/api", tags=["Mapping"])
 app.include_router(mass_customer_sales_mapping_router, prefix="/api", tags=["Mapping"])
 app.include_router(customer_geolocation_router, prefix="/api", tags=["Update"])
-app.include_router(customer_sales_unmap_router, prefix="/api", tags=["Un-Map"])
 app.include_router(stock_matrix_router, prefix="/api", tags=["Sync"])
 app.include_router(pricelist_router, prefix="/api", tags=["Sync"])
 app.include_router(salesman_division_router, prefix="/api", tags=["Sync"])
@@ -102,6 +101,7 @@ app.include_router(odoo_get_router, prefix="/api", tags=["odoo - Get"])
 app.include_router(debug_router, prefix="/api", tags=["Debug"])
 app.include_router(order_history_router, prefix="/api", tags=["Sync"])
 app.include_router(outlet_stock_router, prefix="/api", tags=["Sync"])
+app.include_router(outlet_stock_deactivate_router, prefix="/api", tags=["Deactivate"])
 app.include_router(call_plan_router, prefix="/api", tags=["Sync"])
 app.include_router(compare_router, prefix="/api", tags=["Compare"])
 app.include_router(export_router, prefix="/api", tags=["Export"])

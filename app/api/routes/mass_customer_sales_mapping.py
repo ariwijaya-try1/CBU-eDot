@@ -12,6 +12,7 @@ class MappingMode(str, Enum):
 
     add = "add"
     reset = "reset"
+    remove = "remove"  # 20 Nov 2026 -- unmap salesman_ids dari semua customer
 
 
 router = APIRouter()
@@ -37,7 +38,10 @@ def mass_map_customers_to_sales(
             "customer) DIPERTAHANKAN + salesman baru yang match branch "
             "ditambahkan (dedupe by id). 'reset' -- salesmans customer "
             "DITIMPA total, HANYA berisi salesman yang match branch dari "
-            "request ini."
+            "request ini. 'remove' -- salesman_ids DIBUANG dari semua customer "
+            "(salesman lain tetap, tanpa filter branch); customer yang jadi "
+            "tanpa salesman TIDAK diubah, dilaporkan di needs_ui_unmap "
+            "(hapus manual lewat UI eSuite)."
         ),
     ),
     limit: int | None = Query(
@@ -64,6 +68,15 @@ def mass_map_customers_to_sales(
         description=(
             "OPSIONAL -- override ukuran batch push (default 1000, sama "
             "pola dengan POST /sync/customers)."
+        ),
+    ),
+    external_codes: str | None = Query(
+        None,
+        description=(
+            "OPSIONAL -- batasi ke customer tertentu, comma-separated "
+            "'ODOO-PARTNER-{id}' (mis. outlet 1 slot Odoo utk akun mirror "
+            "testing). Filter branch tetap berlaku. Code yang tidak ada di "
+            "eSuite tidak di-push, dilaporkan di external_codes_not_found."
         ),
     ),
 ):
@@ -126,4 +139,5 @@ def mass_map_customers_to_sales(
         limit=limit,
         dry_run=dry_run,
         batch_size=batch_size,
+        external_codes=external_codes,
     )

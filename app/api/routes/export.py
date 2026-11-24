@@ -15,6 +15,8 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.salesman_slots import SALESMAN_SLOTS
+from app.core.exceptions import ValidationError
+from app.core.scope import IN_SCOPE_COMPANY_NAMES
 from app.services.outlet_stock_input_export_service import OutletStockInputExportService
 from app.services.visit_schedule_export_service import ExportPeriode, VisitScheduleExportService, resolve_period
 
@@ -23,6 +25,8 @@ router = APIRouter()
 # Pilihan slot (select box Swagger) = isi tabel mapping.
 # Enum("Nama", {key: value}) = cara bikin Enum dinamis dari data.
 ExportSlot = Enum("ExportSlot", {s["odoo_slot"]: s["odoo_slot"] for s in SALESMAN_SLOTS}, type=str)
+# 23 Nov 2026: pilihan company (select box Swagger) = daftar company in-scope.
+ExportCompany = Enum("ExportCompany", {n: n for n in IN_SCOPE_COMPANY_NAMES}, type=str)
 
 
 @router.get("/odoo/visit-schedule/export")
@@ -73,6 +77,30 @@ def export_outlet_stock_input_progress(
             "(mis. ODOO-PARTNER-25066,ODOO-PARTNER-25067). Kosong = SEMUA outlet yang punya Product Stock di eSuite."
         ),
     ),
+    company: ExportCompany | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL -- hanya outlet milik company Odoo ini (res.partner.company_id). "
+            "Kosong = SEMUA company. Bisa digabung dgn external_codes."
+        ),
+    ),
+    salesperson_ids: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL -- id res.users (Salesperson Odoo, field user_id di Contact), pisah koma "
+            "(mis. 87,92). Lihat GET /odoo/salesperson. Kosong = semua sales. Bisa digabung dgn company."
+        ),
+    ),
+    salesman_employee_ids: str | None = Query(
+        default=None,
+        description=(
+            "OPSIONAL -- employee_id akun eSuite, pisah koma (spasi boleh). Contoh Jakarta: "
+            "202600018, 202600010, 202600015, 202600013 | Bali: 202600019, 202600016, 202600017, "
+            "202600011, 202600009, 202600014, 202600020. Diterjemahkan ke Salesperson Odoo lewat "
+            "app/core/salesman_slots.py (akun mirror ikut slot utamanya). Kosong = semua sales. "
+            "Digabung dgn filter lain sebagai AND."
+        ),
+    ),
 ):
     """
     Download Excel progress input Product Stock outlet (eWork) -- 9 November
@@ -92,7 +120,21 @@ def export_outlet_stock_input_progress(
     waktu (tarik seluruh stock-matrix + customer + warehouse eSuite).
     """
     codes = external_codes.split(",") if external_codes else None
-    content, filename = OutletStockInputExportService().build(codes)
+    user_ids = None
+    if salesperson_ids:
+        try:
+            user_ids = [int(i.strip()) for i in salesperson_ids.split(",") if i.strip()]
+        except ValueError:
+            raise ValidationError(
+                f"Parameter 'salesperson_ids' harus angka semua, pisah koma -- dapat: '{salesperson_ids}'",
+                details={"salesperson_ids": salesperson_ids},
+            )
+    content, filename = OutletStockInputExportService().build(
+        codes,
+        company.value if company else None,
+        user_ids,
+        salesman_employee_ids.split(",") if salesman_employee_ids else None,
+    )
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

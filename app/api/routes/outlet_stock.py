@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Query
 from app.services.outlet_stock_sync_service import OutletStockSyncService
+from app.services.outlet_stock_discontinue_service import OutletStockDiscontinueService
 
 router = APIRouter()
 service = OutletStockSyncService()
+# 17 Nov 2026 -- grup Swagger "Deactivate" (baris muncul lagi kalau produk dikirim/diinput ulang)
+deactivate_router = APIRouter()
+discontinue_service = OutletStockDiscontinueService()
 
 
 @router.post("/sync/outlet-stock")
@@ -93,7 +97,8 @@ def sync_outlet_stock(
     Product Stock) lewat webhook `POST /v1/webhook/store-stock`.
 
     - **Sumber list produk:** produk yang pernah dibeli outlet -- riwayat
-      `sale.order` Odoo dgn `invoice_status` "to invoice"/"invoiced".
+      `sale.order` Odoo dgn `invoice_status` "invoiced" (bukan "to invoice") dan
+      `date_order` >= 2026-01-01.
     - **Yang dikirim:** `uom_level_code: ""` (satuan dasar), tanpa
       `expired_date`. Odoo tidak tahu stok fisik di outlet.
     - **Guard customer:** harus sudah ada di eSuite DAN punya sales branch
@@ -125,4 +130,66 @@ def sync_outlet_stock(
         dry_run=dry_run,
         batch_size=batch_size,
         include_payload=include_payload,
+    )
+
+
+@deactivate_router.post("/deactivate/outlet-stock-discontinue")
+def delete_outlet_stock_discontinue(
+    external_codes: str = Query(
+        ...,
+        description=(
+            "WAJIB -- outlet/customer, comma-separated, format 'ODOO-PARTNER-{id}'. "
+            "Tidak ada mode semua outlet (1 GET stock-matrix per warehouse outlet)."
+        ),
+    ),
+    dry_run: bool = Query(
+        default=True,
+        description=(
+            "Default True = cuma tampilkan produk discontinue + baris yang AKAN dihapus, "
+            "TANPA push. Isi false utk menghapus beneran."
+        ),
+    ),
+    batch_size: int | None = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="OPSIONAL -- item per request (maks 50, batas eSuite).",
+    ),
+    include_payload: bool = Query(
+        default=False,
+        description="OPSIONAL -- True = sertakan payload (dry run) / payload_sent per batch.",
+    ),
+    include_not_purchased: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL -- True = ikut hapus SEMUA baris produk aktif yang pernah dibeli "
+            "outlet tapi TIDAK dibeli lagi sejak 2026-01-01 (sisa pre-fill lama). "
+            "Produk yang tidak pernah dibeli outlet tidak disentuh. Default False."
+        ),
+    ),
+):
+    """
+    Hapus baris Product Stock outlet (eWork) utk produk DISCONTINUE =
+    archived (atau terhapus) di Odoo, lewat POST /v1/webhook/store-stock
+    "event": "delete" tanpa expired_date.
+
+    ⚠️ SEMUA baris produk itu di outlet dihapus, TERMASUK qty/expired yang
+    sudah diisi sales (keputusan user 13 Nov 2026). Cek hasil dry_run
+    (`items[].rows`) sebelum dry_run=false.
+
+    Produk aktif di Odoo dan variant yang bukan dari Odoo tidak disentuh,
+    KECUALI `include_not_purchased=true` (19 Nov 2026): produk aktif yang
+    pernah dibeli outlet tapi tidak dibeli lagi sejak 2026-01-01 ikut
+    dihapus (semua barisnya, termasuk isian sales). "Dibeli" = sale.order
+    `invoice_status` "invoiced" saja (20 Nov 2026). Alasan per item ada di
+    `items[].reason`.
+    Aman dijalankan ulang. Baris muncul lagi kalau produk dikirim/diinput
+    ulang (push stok outlet sudah melewati produk archived).
+    """
+    return discontinue_service.run(
+        external_codes=external_codes,
+        dry_run=dry_run,
+        batch_size=batch_size,
+        include_payload=include_payload,
+        include_not_purchased=include_not_purchased,
     )

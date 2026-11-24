@@ -85,6 +85,23 @@ def _normalize(value, selection: dict) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(text).upper())
 
 
+def filter_edot_salespersons(partners: list[dict]) -> tuple[list[dict], dict[str, int]]:
+    """
+    18 Nov 2026 -- sisakan customer yang Salesperson Odoo-nya ada di tabel
+    app/core/salesman_slots.py (punya akun eDot). Cocok by NAMA slot (sama
+    dgn call plan). Return (partner terfilter, {salesperson: jumlah} yang dibuang).
+    """
+    kept, excluded = [], {}
+    for p in partners:
+        name = p["user_id"][1] if p.get("user_id") else None
+        if name in SLOTS_BY_NAME:
+            kept.append(p)
+        else:
+            key = name or "(tanpa salesperson)"
+            excluded[key] = excluded.get(key, 0) + 1
+    return kept, dict(sorted(excluded.items()))
+
+
 class VisitScheduleService:
     def __init__(self):
         self.odoo = OdooClient()
@@ -103,6 +120,7 @@ class VisitScheduleService:
         visit_date: date | None = None,
         salesperson_ids: list[int] | None = None,
         company_id: int | None = None,
+        edot_only: bool = False,
     ) -> dict:
         visit_date = visit_date or datetime.now(WITA).date()
         year, month, week_no = week_of_month(visit_date)
@@ -112,6 +130,10 @@ class VisitScheduleService:
         partners = self.odoo.get_customers_with_visit_schedule(
             VISIT_FIELDS, salesperson_ids=salesperson_ids, company_id=company_id
         )
+        # 18 Nov 2026 -- opsi "hanya salesman eDot" (default di route)
+        excluded = {}
+        if edot_only:
+            partners, excluded = filter_edot_salespersons(partners)
 
         outlets, invalid_rows = [], []
         valid_count = 0
@@ -151,7 +173,10 @@ class VisitScheduleService:
             "visit_day": DAY_LABELS[weekday],
             "week_of_month": week_no,
             "week_month": f"{year}-{month:02d}",
-            "filters": {"salesperson_ids": salesperson_ids, "company_id": company_id},
+            "filters": {"salesperson_ids": salesperson_ids, "company_id": company_id, "edot_only": edot_only},
+            # Customer ber-visit yang dibuang krn Salesperson-nya tidak punya akun eDot
+            "excluded_non_edot_count": sum(excluded.values()),
+            "excluded_non_edot_per_salesperson": excluded,
             "customers_with_visit_data": len(partners),
             "valid_schedule_count": valid_count,
             "outlet_count": len(outlets),
@@ -169,6 +194,7 @@ class VisitScheduleService:
         date_to: date,
         salesperson_ids: list[int] | None = None,
         company_id: int | None = None,
+        edot_only: bool = False,
     ) -> dict:
         """
         6 November 2026 -- versi RENTANG dari get_visits_on (minggu ini /
@@ -179,6 +205,10 @@ class VisitScheduleService:
         partners = self.odoo.get_customers_with_visit_schedule(
             VISIT_FIELDS, salesperson_ids=salesperson_ids, company_id=company_id
         )
+        # 18 Nov 2026 -- opsi "hanya salesman eDot" (default di route)
+        excluded = {}
+        if edot_only:
+            partners, excluded = filter_edot_salespersons(partners)
 
         # Parse sekali: (row, weekday kunjungan, set minggu / None = tiap minggu)
         schedules, invalid_rows = [], []
@@ -229,7 +259,10 @@ class VisitScheduleService:
         return {
             "date_from": date_from.isoformat(),
             "date_to": date_to.isoformat(),
-            "filters": {"salesperson_ids": salesperson_ids, "company_id": company_id},
+            "filters": {"salesperson_ids": salesperson_ids, "company_id": company_id, "edot_only": edot_only},
+            # Customer ber-visit yang dibuang krn Salesperson-nya tidak punya akun eDot
+            "excluded_non_edot_count": sum(excluded.values()),
+            "excluded_non_edot_per_salesperson": excluded,
             "customers_with_visit_data": len(partners),
             "valid_schedule_count": len(schedules),
             "total_visits": sum(x["outlet_count"] for x in days),

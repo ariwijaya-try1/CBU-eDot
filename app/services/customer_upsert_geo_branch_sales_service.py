@@ -2,6 +2,7 @@ from app.clients.odoo_client import OdooClient
 from app.clients.esuite_client import EsuiteClient
 from app.core.admin_area import AdminAreaResolver
 from app.core.exceptions import ValidationError
+from app.core.scope import esuite_customer_name
 
 # Konstanta di bawah ini SENGAJA DIDUPLIKASI dari customer_sync_service.py
 # (bukan cross-import antar service) -- konsisten dengan convention project
@@ -262,7 +263,8 @@ class CustomerUpsertGeoBranchSalesService:
         admin_levels: list[dict] | None = None,
     ) -> dict:
         payload = {
-            "name": customer["name"],
+            # 20 Nov 2026: + penanda company, mis. "(SFC)" -- lihat core/scope.py
+            "name": esuite_customer_name(customer["name"], customer.get("company_id")),
             "external_code": f"{EXTERNAL_CODE_PREFIX}{customer['id']}",
             "type": self._resolve_customer_type(customer.get("company_type")),
             "status": "active",

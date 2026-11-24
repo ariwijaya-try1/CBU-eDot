@@ -10,10 +10,16 @@ from app.core.sync_logger import log_sync_result
 CUSTOMER_EXTERNAL_CODE_PREFIX = "ODOO-PARTNER-"
 PRODUCT_EXTERNAL_CODE_PREFIX = "ODOO-PROD-"
 
-# "Pernah dibeli" = order yang barangnya sudah terkirim. Daftar status SAMA
-# dgn ELIGIBLE_INVOICE_STATUSES di order_history_sync_service.py (draft /
-# quotation / cancel tidak ikut).
-ELIGIBLE_INVOICE_STATUSES = ["to invoice", "invoiced"]
+# "Pernah dibeli" = order dgn invoice_status "invoiced" saja (20 Nov 2026,
+# keputusan user: "to invoice" belum final, bisa gagal -> tidak dihitung).
+# Sengaja BEDA dgn order_history_sync_service.py. HARUS SAMA dgn
+# outlet_stock_discontinue_service.py (supaya pre-input & hapus tidak bolak-balik).
+ELIGIBLE_INVOICE_STATUSES = ["invoiced"]
+
+# 19 November 2026 (keputusan user) -- riwayat pembelian dihitung hanya dari
+# order dgn date_order >= tanggal ini, supaya produk yang lama tidak dibeli
+# tidak masuk list stok outlet.
+PURCHASE_DATE_FROM = "2026-01-01"
 
 # Odoo TIDAK tahu stok fisik di outlet -- bridge cuma menyiapkan LIST
 # produknya: tiap baris dikirim on_hand 0, tanpa expired_date.
@@ -81,7 +87,8 @@ class OutletStockSyncService:
       1. Customer Odoo (semua, atau external_codes tertentu).
       2. GUARD customer -- cek eSuite: customer harus sudah ada DAN punya
          sales branch (syarat endpoint store-stock dari dev eDot).
-      3. Odoo -- produk yang pernah dibeli tiap customer (riwayat sale.order).
+      3. Odoo -- produk yang pernah dibeli tiap customer (riwayat sale.order
+         sejak PURCHASE_DATE_FROM).
       4. GUARD produk -- cek eSuite: produk harus sudah ada dgn variant valid
          (pola sama stock_sync_service.py).
       5. Push per 50 item, BERURUTAN: kirim stok 0, lalu kembalikan nilai
@@ -155,7 +162,9 @@ class OutletStockSyncService:
         for i in range(0, len(eligible_ids), ODOO_CUSTOMER_CHUNK_SIZE):
             chunk = eligible_ids[i : i + ODOO_CUSTOMER_CHUNK_SIZE]
             purchased.update(
-                self.odoo.get_purchased_product_ids_by_customer(chunk, ELIGIBLE_INVOICE_STATUSES)
+                self.odoo.get_purchased_product_ids_by_customer(
+                    chunk, ELIGIBLE_INVOICE_STATUSES, date_from=PURCHASE_DATE_FROM
+                )
             )
 
         # 4. GUARD produk
@@ -186,7 +195,10 @@ class OutletStockSyncService:
                 skipped_customers.append({
                     "customer_external_code": code,
                     "customer_name": name,
-                    "reason": f"tidak ada riwayat order (invoice_status {eligible_statuses}) di Odoo",
+                    "reason": (
+                        f"tidak ada riwayat order (invoice_status {eligible_statuses}, "
+                        f"date_order >= {PURCHASE_DATE_FROM}) di Odoo"
+                    ),
                 })
                 continue
 

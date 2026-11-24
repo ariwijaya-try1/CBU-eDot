@@ -24,6 +24,8 @@ slot MT02; Fani pakai Salesman_5 & pegang slot MT04. Akun MT02<->MT04 ditukar.
 7 November 2026 (keputusan user): akun UTAMA MT01 = Akbar (Salesman_8, SMD,
 kunjungan rutin); Yoni (Salesman_6, sales, visit insidentil) jadi MIRROR Akbar
 -- sementara, sampai mapping sales user di Odoo berubah.
+20 November 2026 (tabel user): 4 slot Jakarta MT (branch eSuite SBU) masuk --
+pemetaan orang final 9 Nov (Decision Log v36), akun eDot Salesman_7/9/10/11.
 """
 
 SALESMAN_SLOTS = [
@@ -33,6 +35,11 @@ SALESMAN_SLOTS = [
     {"odoo_slot": "[SALES] BAL MT03", "esuite_employee_id": "202600014", "esuite_username": "Salesman_4", "person": "Anda (MT)"},
     {"odoo_slot": "[SALES] BAL MT02", "esuite_employee_id": "202600009", "esuite_username": "Salesman_3", "person": "Winaya (MT)"},
     {"odoo_slot": "[SALES] BAL MT01", "esuite_employee_id": "202600011", "esuite_username": "Salesman_8", "person": "Akbar (SMD MT)"},
+    # 20 Nov 2026 -- Jakarta MT (branch eSuite Sunshine Boga Utama/SBU)
+    {"odoo_slot": "[SALES] JKT MT01", "esuite_employee_id": "202600018", "esuite_username": "Salesman_7", "person": "Farell Rizky Ramadhan (JKT MT)"},
+    {"odoo_slot": "[SALES] JKT MT02", "esuite_employee_id": "202600010", "esuite_username": "Salesman_9", "person": "Doni Setiawan (JKT MT)"},
+    {"odoo_slot": "[SALES] JKT MT03", "esuite_employee_id": "202600015", "esuite_username": "Salesman_10", "person": "Rahmad Fikri Yuliana (JKT MT)"},
+    {"odoo_slot": "[SALES] JKT MT04", "esuite_employee_id": "202600013", "esuite_username": "Salesman_11", "person": "Adillah Nusa (JKT MT)"},
 ]
 
 SLOTS_BY_NAME = {s["odoo_slot"]: s for s in SALESMAN_SLOTS}

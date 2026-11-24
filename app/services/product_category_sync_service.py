@@ -47,8 +47,8 @@ class ProductCategorySyncService:
            parent yang salah, itu perlu ditest terpisah (kirim eksplisit
            "parent": null) -- BELUM diimplementasi di sini, JANGAN
            diasumsikan jalan tanpa test (ambiguitas sama seperti
-           CustomerSalesMappingService.unmap_from_sales(), lihat komentar
-           di sana soal null vs [] utk clear field eSuite).
+           unmap customer-sales lama (dihapus 20 Nov 2026): null maupun []
+           TERBUKTI tidak bisa clear field relasi eSuite lewat API).
         3. Bisa ditest aman ke SUBSET kecil dulu -- gabungkan dengan param
            `external_codes` yang sudah ada (mis.
            `?with_parent=true&external_codes=ODOO-CAT-123`) sebelum

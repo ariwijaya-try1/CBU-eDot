@@ -1,0 +1,70 @@
+{
+  "warehouse_id": "6ac9af5816d5c7c3ed7172df",
+  "products": [
+    "MPV-04576",
+    "MPV-04593",
+    "MPV-04596",
+    "MPV-04925"
+  ],
+  "label": "bhw_after",
+  "taken_at": "2026-11-17 16:26:26",
+  "row_count": 4,
+  "rows": [
+    {
+      "id": "6ac9af8ba82782e0ca4df5ab",
+      "product": "MPV-04576",
+      "product_name": "KIMBO Sosis Sapi Mini Bratwurst 10 Pcs 1x14x500g",
+      "batch": "EWORK",
+      "on_hand": 0,
+      "created_by": "0",
+      "created_by_name": "Webhook",
+      "updated_by": "0",
+      "updated_by_name": "Webhook",
+      "created_at": "2026-10-10 11:22:51",
+      "updated_at": "2026-10-10 11:22:51",
+      "objectid_time": "2026-10-10 11:22:51"
+    },
+    {
+      "id": "6ac9af8ba82782e0ca4df5af",
+      "product": "MPV-04593",
+      "product_name": "KIMBO Heppiii Bakso Sapi 25 Pcs 1x10x325g",
+      "batch": "EWORK",
+      "on_hand": 0,
+      "created_by": "0",
+      "created_by_name": "Webhook",
+      "updated_by": "0",
+      "updated_by_name": "Webhook",
+      "created_at": "2026-10-10 11:22:51",
+      "updated_at": "2026-10-10 11:22:51",
+      "objectid_time": "2026-10-10 11:22:51"
+    },
+    {
+      "id": "6ac9af8ba82782e0ca4df5ad",
+      "product": "MPV-04596",
+      "product_name": "VIGO Sosis Ayam Kombinasi Ayam 15 Pcs 1x26x375g",
+      "batch": "EWORK",
+      "on_hand": 0,
+      "created_by": "0",
+      "created_by_name": "Webhook",
+      "updated_by": "0",
+      "updated_by_name": "Webhook",
+      "created_at": "2026-10-10 11:22:51",
+      "updated_at": "2026-10-10 11:22:51",
+      "objectid_time": "2026-10-10 11:22:51"
+    },
+    {
+      "id": "6ac9af75a82782e0ca4df4cf",
+      "product": "MPV-04925",
+      "product_name": "RIBURASA Bequ Tahu Bakso Daging Kombinasi 1x20x400g",
+      "batch": "EWORK",
+      "on_hand": 0,
+      "created_by": "0",
+      "created_by_name": "Webhook",
+      "updated_by": "0",
+      "updated_by_name": "Webhook",
+      "created_at": "2026-10-10 11:22:29",
+      "updated_at": "2026-10-10 11:22:29",
+      "objectid_time": "2026-10-10 11:22:29"
+    }
+  ]
+}

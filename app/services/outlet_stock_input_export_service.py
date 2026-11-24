@@ -38,6 +38,7 @@ from io import BytesIO
 from app.clients.esuite_client import EsuiteClient
 from app.clients.odoo_client import OdooClient
 from app.core.exceptions import AppError, ValidationError
+from app.core.salesman_slots import MIRROR_ACCOUNTS, SALESMAN_SLOTS
 from app.services.visit_schedule_service import WITA
 
 CUSTOMER_EXTERNAL_CODE_PREFIX = "ODOO-PARTNER-"
@@ -50,6 +51,17 @@ MAX_PAGES = 500  # pengaman loop paging
 # -> tarik per warehouse outlet pakai query param ini (terbukti live: 07 AM BAKERS CLUB = 3 baris)
 STOCK_MATRIX_WAREHOUSE_PARAM = "warehouse_id"
 EMPTY_USER_VALUES = {"", "0", "-", "none", "null"}
+
+
+def _names(values) -> str:
+    """20 Nov 2026: list {id, name} mapping customer eSuite (sales.branchs / sales.salesmans)
+    -> teks dipisah koma; nama kosong -> id (mapping lama pernah dikirim tanpa name)."""
+    out = set()
+    for v in values or []:
+        text = (v.get("name") or v.get("id")) if isinstance(v, dict) else v
+        if text:
+            out.add(str(text).strip())
+    return ", ".join(sorted(out)) or "-"
 
 
 def _user(value) -> str:
@@ -92,9 +104,24 @@ class OutletStockInputExportService:
         self.odoo = OdooClient()
         self._employee_labels: dict[str, str] | None = None  # cache login -> nama employee eSuite
 
-    def build(self, external_codes: list[str] | None = None) -> tuple[bytes, str]:
-        """Return (isi file .xlsx, nama file)."""
+    def build(
+        self,
+        external_codes: list[str] | None = None,
+        company: str | None = None,
+        salesperson_ids: list[int] | None = None,
+        employee_ids: list[str] | None = None,
+    ) -> tuple[bytes, str]:
+        """Return (isi file .xlsx, nama file).
+
+        23 Nov 2026 -- filter opsional (bisa digabung, AND):
+        - company: nama company Odoo (IN_SCOPE_COMPANY_NAMES) -> hanya outlet dgn
+          res.partner.company_id itu (substring, case-insensitive).
+        - salesperson_ids: id res.users -> hanya outlet dgn res.partner.user_id salah satunya.
+        - employee_ids: employee_id akun eSuite (app/core/salesman_slots.py, termasuk akun
+          mirror) -> slot Salesperson Odoo -> outlet dgn res.partner.user_id slot tsb.
+        """
         wanted = {c.strip() for c in external_codes or [] if c.strip()}
+        slots = self._slots_from_employee_ids(employee_ids)  # validasi sebelum tarik data
         bad = sorted(c for c in wanted if not c.startswith(CUSTOMER_EXTERNAL_CODE_PREFIX))
         if bad:
             raise ValidationError(
@@ -109,6 +136,9 @@ class OutletStockInputExportService:
             if c.get("id") and str(c.get("external_code") or "").startswith(CUSTOMER_EXTERNAL_CODE_PREFIX)
             and (not wanted or c.get("external_code") in wanted)
         }
+        # 1b. 23 Nov 2026 -- filter company / salesperson Odoo (sebelum tarik stok per warehouse, lebih cepat)
+        if company or salesperson_ids or slots:
+            customers = self._filter_customers(customers, company, salesperson_ids, slots)
 
         # 2. warehouse outlet -> customer (lewat address.id)
         wh_customer: dict[str, dict] = {}
@@ -175,6 +205,9 @@ class OutletStockInputExportService:
                 "cust_code": c.get("code") or "",
                 "name": c.get("name") or "",
                 "salesperson": salespersons.get(int(pid), "(tanpa Salesperson)") if pid.isdigit() else "-",
+                # 20 Nov 2026: mapping customer di eSuite (siapa yang lihat outlet di eWork)
+                "branch_edot": _names((c.get("sales") or {}).get("branchs")),
+                "salesman_edot": _names((c.get("sales") or {}).get("salesmans")),
                 "items": {},
             })
             for key, item in items.items():
@@ -198,8 +231,12 @@ class OutletStockInputExportService:
             o["last"] = max(lasts) if lasts else None
             o["by"] = sorted({b for i in items for b in i["by"]})
 
-        content = self._workbook(rows, wanted)
-        filename = f"progress_input_stok_outlet_{datetime.now(WITA):%Y%m%d_%H%M}.xlsx"
+        filter_label = " | company: " + (company or "semua") + (
+            f" | salesperson id: {','.join(map(str, salesperson_ids))}" if salesperson_ids else ""
+        ) + (f" | sales: {', '.join(slots)}" if slots else "")
+        content = self._workbook(rows, wanted, filter_label)
+        suffix = f"_{company.replace(' ', '_')}" if company else ""
+        filename = f"progress_input_stok_outlet{suffix}_{datetime.now(WITA):%Y%m%d_%H%M}.xlsx"
         return content, filename
 
     def _employee_label(self, login: str) -> str:
@@ -295,6 +332,56 @@ class OutletStockInputExportService:
                     status_code=502,
                 )
 
+    @staticmethod
+    def _slots_from_employee_ids(employee_ids: list[str] | None) -> list[str]:
+        """23 Nov 2026: employee_id eSuite -> nama slot Salesperson Odoo (urut, tanpa dobel).
+        Id tidak ada di tabel -> ValidationError (bukan diam-diam dilewati)."""
+        ids = [e.strip() for e in employee_ids or [] if e.strip()]
+        if not ids:
+            return []
+        table = {
+            a["esuite_employee_id"]: a["odoo_slot"]
+            for a in SALESMAN_SLOTS + MIRROR_ACCOUNTS
+            if a.get("esuite_employee_id")
+        }
+        unknown = sorted({e for e in ids if e not in table})
+        if unknown:
+            raise ValidationError(
+                "salesman_employee_ids tidak ada di app/core/salesman_slots.py",
+                details={"unknown": unknown, "valid": sorted(table)},
+            )
+        return list(dict.fromkeys(table[e] for e in ids))  # dict.fromkeys = buang dobel, urutan tetap
+
+    def _filter_customers(
+        self,
+        customers: dict[str, dict],
+        company: str | None,
+        salesperson_ids: list[int] | None,
+        slots: list[str] | None = None,
+    ) -> dict[str, dict]:
+        """23 Nov 2026: sisakan customer eSuite yang partner Odoo-nya cocok company DAN salesperson.
+        Lookup Odoo gagal -> AppError naik (export tidak boleh diam-diam berisi semua outlet)."""
+        ids = {
+            cid: int(c["external_code"][len(CUSTOMER_EXTERNAL_CODE_PREFIX):])
+            for cid, c in customers.items()
+            if c["external_code"][len(CUSTOMER_EXTERNAL_CODE_PREFIX):].isdigit()
+        }
+        info = self.odoo.get_partner_company_and_salesperson(list(ids.values()))
+        key = (company or "").lower()
+        wanted_users = set(salesperson_ids or [])
+        wanted_slots = set(slots or [])
+        result = {}
+        for cid, pid in ids.items():
+            p = info.get(pid) or {}
+            if key and key not in (p.get("company") or "").lower():
+                continue
+            if wanted_users and p.get("user_id") not in wanted_users:
+                continue
+            if wanted_slots and p.get("user_name") not in wanted_slots:
+                continue
+            result[cid] = customers[cid]
+        return result
+
     def _salespersons(self, partner_ids: list[int]) -> dict[int, str]:
         """id partner -> nama Salesperson Odoo; gagal baca Odoo = kosong (export tetap jalan)."""
         try:
@@ -303,7 +390,7 @@ class OutletStockInputExportService:
             return {}
 
     # ------------------------------------------------------------------ Excel
-    def _workbook(self, outlets: list[dict], wanted: set[str]) -> bytes:
+    def _workbook(self, outlets: list[dict], wanted: set[str], filter_label: str = "") -> bytes:
         # Import di sini: bridge tetap bisa start walau openpyxl belum terpasang.
         try:
             from openpyxl import Workbook
@@ -324,7 +411,8 @@ class OutletStockInputExportService:
         def sheet(ws, title, labels, widths, data):
             ws["A1"] = title
             ws["A1"].font = Font(bold=True, size=14)
-            ws["A2"] = f"Dibuat {generated}" + (f" | filter {len(wanted)} outlet" if wanted else " | semua outlet")
+            ws["A2"] = (f"Dibuat {generated}" + (f" | filter {len(wanted)} outlet" if wanted else " | semua outlet")
+                        + filter_label)
             for i, label in enumerate(labels, start=1):
                 c = ws.cell(row=4, column=i, value=label)
                 c.fill, c.font, c.alignment = head_fill, head_font, Alignment(wrap_text=True, vertical="center")
@@ -363,10 +451,11 @@ class OutletStockInputExportService:
         ws = wb.create_sheet("Per Outlet")
         sheet(
             ws, "Progress Input Stok Outlet -- per Outlet",
-            ["External Code", "Kode Customer", "Outlet", "Salesperson Odoo", "Total SKU", "Sudah Input",
-             "Belum Input", "% Input", "Input Terakhir (WITA)", "Diinput Oleh (eSuite)"],
-            [22, 14, 36, 28, 10, 12, 12, 9, 20, 28],
-            [[o["external_code"], o["cust_code"], o["name"], o["salesperson"], o["total"], o["done"],
+            ["External Code", "Kode Customer", "Outlet", "Salesperson Odoo", "Branch eDot", "Salesman eDot",
+             "Total SKU", "Sudah Input", "Belum Input", "% Input", "Input Terakhir (WITA)", "Diinput Oleh (eSuite)"],
+            [22, 14, 36, 28, 26, 40, 10, 12, 12, 9, 20, 28],
+            [[o["external_code"], o["cust_code"], o["name"], o["salesperson"], o["branch_edot"],
+              o["salesman_edot"], o["total"], o["done"],
               o["total"] - o["done"], pct(o["done"], o["total"]), fmt(o["last"]),
               ", ".join(o["by"]) or "-"] for o in outlets],
         )
@@ -374,36 +463,38 @@ class OutletStockInputExportService:
         # ---- Belum Input
         ws = wb.create_sheet("Belum Input")
         pending = [
-            [o["external_code"], o["name"], o["salesperson"], i["code"], i["name"]]
+            [o["external_code"], o["name"], o["salesperson"], o["branch_edot"], o["salesman_edot"],
+             i["code"], i["name"]]
             for o in outlets
             for i in sorted(o["items"].values(), key=lambda x: x["name"])
             if not i["input"]
         ]
         sheet(
             ws, "SKU Belum Diinput",
-            ["External Code Outlet", "Outlet", "Salesperson Odoo", "Kode Produk", "Produk"],
-            [22, 36, 28, 14, 50],
+            ["External Code Outlet", "Outlet", "Salesperson Odoo", "Branch eDot", "Salesman eDot",
+             "Kode Produk", "Produk"],
+            [22, 36, 28, 26, 40, 14, 50],
             pending,
         )
 
         # ---- Detail
         ws = wb.create_sheet("Detail")
         detail = [
-            [o["external_code"], o["name"], o["salesperson"], i["code"], i["name"],
-             "Sudah" if i["input"] else "Belum", fmt(i["last"]), ", ".join(sorted(i["by"])) or "-", i["row_count"]]
+            [o["external_code"], o["name"], o["salesperson"], o["branch_edot"], o["salesman_edot"],
+             i["code"], i["name"], "Sudah" if i["input"] else "Belum", fmt(i["last"]), ", ".join(sorted(i["by"])) or "-", i["row_count"]]
             for o in outlets
             for i in sorted(o["items"].values(), key=lambda x: x["name"])
         ]
         sheet(
             ws, "Detail SKU per Outlet",
-            ["External Code Outlet", "Outlet", "Salesperson Odoo", "Kode Produk",
-             "Produk", "Status", "Input Terakhir (WITA)", "Diinput Oleh (eSuite)", "Jumlah Baris"],
-            [22, 36, 28, 14, 50, 9, 20, 24, 8],
+            ["External Code Outlet", "Outlet", "Salesperson Odoo", "Branch eDot", "Salesman eDot",
+             "Kode Produk", "Produk", "Status", "Input Terakhir (WITA)", "Diinput Oleh (eSuite)", "Jumlah Baris"],
+            [22, 36, 28, 26, 40, 14, 50, 9, 20, 24, 8],
             detail,
         )
         for r in range(5, 5 + len(detail)):
-            if ws.cell(row=r, column=6).value == "Belum":
-                ws.cell(row=r, column=6).fill = red
+            if ws.cell(row=r, column=8).value == "Belum":  # kolom Status (geser +2, 20 Nov 2026)
+                ws.cell(row=r, column=8).fill = red
 
         # ---- Catatan
         ws = wb.create_sheet("Catatan")
@@ -417,6 +508,7 @@ class OutletStockInputExportService:
             "Input Terakhir = waktu baris ber-expired / buatan app DIBUAT (dari id baris eSuite, sama dgn kolom Created At di UI Stocks), WITA. Bukan created_at/updated_at API (ikut terisi waktu push bridge). Placeholder pre-fill yang hanya diubah qty-nya: waktu tidak diketahui ('-').",
             "Produk discontinue (di-archive di Odoo) TIDAK dihitung (tidak perlu diinput), walau barisnya masih ada di Product Stock outlet.",
             "Outlet yang belum punya warehouse outlet di eSuite (belum pernah di-pre-fill / diinput) tidak muncul.",
+            "Branch eDot / Salesman eDot = mapping customer di eSuite = siapa yang BISA melihat outlet di eWork (beda dgn Salesperson Odoo & Diinput Oleh). Outlet sama bisa terdaftar di CBU & SFC (formasi barang beda) -> keduanya wajib diisi.",
             "Status stok bersifat kumulatif (bukan per kunjungan): produk yang pernah diisi tetap terhitung Sudah.",
         ], start=1):
             ws.cell(row=r, column=1, value=text).font = Font(bold=(r == 1))

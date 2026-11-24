@@ -321,12 +321,29 @@ def get_odoo_salesperson(
 def get_odoo_customer_by_salesperson(
     salesperson_id: int = Query(..., description="id res.users (Salesperson) -- lihat GET /odoo/salesperson."),
     limit: int | None = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    with_csv: bool = Query(
+        default=False,
+        description=(
+            "OPSIONAL (24 Nov 2026) -- true: ambil SEMUA customer (limit diabaikan) dan "
+            "tambah `external_codes_csv` (ODOO-PARTNER-{id}, pisah koma) siap copy-paste ke "
+            "POST /mapping/customer-sales atau endpoint lain yang menerima external_codes. "
+            "false (default): response list mentah seperti sebelumnya."
+        ),
+    ),
 ):
     """
     GET res.partner (Customer/Contact) yang field Salesperson (user_id)-nya
     = salesperson_id ini. Kebalikan dari GET /odoo/salesperson-by-customer.
     """
-    return odoo.get_customers_by_salesperson(salesperson_id=salesperson_id, limit=limit)
+    if not with_csv:
+        return odoo.get_customers_by_salesperson(salesperson_id=salesperson_id, limit=limit)
+    records = odoo.get_customers_by_salesperson(salesperson_id=salesperson_id, limit=None)
+    return {
+        "salesperson_id": salesperson_id,
+        "count": len(records),
+        "external_codes_csv": ",".join(f"ODOO-PARTNER-{r['id']}" for r in records),
+        "data": records,
+    }
 
 
 @router.get("/odoo/salesperson-by-customer")
@@ -671,6 +688,12 @@ class VisitPeriode(str, Enum):
 VISIT_MAX_RANGE_DAYS = 62  # pengaman, sama dgn export visit-schedule
 
 
+class VisitSalespersonScope(str, Enum):
+    """18 Nov 2026 -- cakupan Salesperson GET /odoo/visit-today."""
+    edot = "edot"  # hanya slot di app/core/salesman_slots.py (punya akun eDot)
+    all = "all"    # semua Salesperson Odoo (perilaku lama)
+
+
 @router.get("/odoo/visit-today")
 def get_odoo_visit_today(
     periode: VisitPeriode = Query(
@@ -702,6 +725,15 @@ def get_odoo_visit_today(
         ge=0,
         description="OPSIONAL -- customer milik res.company id ini saja (lihat GET /odoo/branch). 0 = customer TANPA company.",
     ),
+    salesperson_scope: VisitSalespersonScope = Query(
+        default=VisitSalespersonScope.edot,
+        description=(
+            "edot (default) = hanya Salesperson yang punya akun eDot "
+            "(tabel app/core/salesman_slots.py: [SALES] BAL GT01/GT02/MT01-MT04, JKT MT01-MT04). "
+            "all = semua Salesperson Odoo (mis. [SALES] NKA ikut). "
+            "Diabaikan kalau salesperson_ids diisi."
+        ),
+    ),
 ):
     """
     Daftar outlet yang DIKUNJUNGI sales pada 1 tanggal, dihitung dari visit
@@ -723,6 +755,11 @@ def get_odoo_visit_today(
     `external_codes_csv` harian) + `external_codes_csv` outlet UNIK sepanjang
     rentang. `periode=hari_ini` tanpa date_from = response lama (dipakai
     scripts/daily_sync.py).
+
+    18 Nov 2026 -- `salesperson_scope` default `edot`: hanya outlet milik
+    Salesperson yang punya akun eDot (salesman_slots.py). Yang dibuang
+    dilaporkan di `excluded_non_edot_count` / `_per_salesperson`.
+    `all` = perilaku lama.
     """
     ids = None
     if salesperson_ids:
@@ -734,10 +771,13 @@ def get_odoo_visit_today(
                 details={"salesperson_ids": salesperson_ids},
             )
 
-    # Mode lama (1 tanggal) -- response tidak berubah.
+    # 18 Nov 2026 -- salesperson_ids eksplisit menang atas scope
+    edot_only = salesperson_scope == VisitSalespersonScope.edot and not ids
+
+    # Mode lama (1 tanggal) -- response tidak berubah (+ field filter eDot).
     if not date_from and periode == VisitPeriode.hari_ini:
         return VisitScheduleService().get_visits_on(
-            visit_date=visit_date, salesperson_ids=ids, company_id=company_id
+            visit_date=visit_date, salesperson_ids=ids, company_id=company_id, edot_only=edot_only
         )
 
     if date_from:
@@ -763,7 +803,7 @@ def get_odoo_visit_today(
         )
 
     result = VisitScheduleService().get_visits_between(
-        date_from=d_from, date_to=d_to, salesperson_ids=ids, company_id=company_id
+        date_from=d_from, date_to=d_to, salesperson_ids=ids, company_id=company_id, edot_only=edot_only
     )
     return {"periode": "manual" if date_from else periode.value, **result}
 
