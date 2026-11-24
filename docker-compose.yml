@@ -10,4 +10,22 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --reload-dir app: reload cuma memantau kode Python di app/, bukan frontend/ (node_modules besar)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+
+  # Build Edot Bridge UI (Vue) -> frontend/dist, lalu berhenti.
+  # Jalan ulang tiap `docker compose up -d` / `docker compose restart`.
+  # Gagal build tidak mengganggu API (UI lama tetap dipakai): cek `docker compose logs ui-build`.
+  ui-build:
+    image: node:22-alpine
+    container_name: eDot_cbu_ui_build
+    restart: "no"
+    working_dir: /frontend
+    volumes:
+      - ./frontend:/frontend
+      # node_modules di volume Docker, bukan di folder Windows
+      - ui_node_modules:/frontend/node_modules
+    command: sh /frontend/build.sh
+
+volumes:
+  ui_node_modules:

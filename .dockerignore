@@ -1,0 +1,15 @@
+# Rahasia -- jangan sampai masuk image (dibaca lewat env_file saat run)
+.env
+.env.*
+
+# Frontend: di-build oleh service ui-build, bukan bagian image API
+frontend/node_modules
+frontend/dist
+frontend/dist_tmp
+
+# Lain-lain
+.git
+**/__pycache__
+*.pyc
+logs
+Export

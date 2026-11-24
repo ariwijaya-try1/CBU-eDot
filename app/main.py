@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.branch import router as branch_router, deactivate_router as branch_deactivate_router
 from app.api.routes.warehouse import router as warehouse_router
@@ -110,3 +113,32 @@ app.include_router(export_router, prefix="/api", tags=["Export"])
 @app.get("/")
 def root():
     return {"status": "ok"}
+
+
+# Edot Bridge UI (24 November 2026) -- hasil build Vue (frontend/dist, dibuat
+# service `ui-build` di docker-compose) disajikan di /ui/. Mount statis TIDAK
+# kena global Depends(verify_api_key) (dependency cuma berlaku ke route API),
+# jadi halaman UI bisa dibuka tanpa API key; semua call API dari UI tetap
+# wajib header x-api-key. Folder dibaca per request, jadi build ulang UI
+# langsung kepakai tanpa restart API.
+UI_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+class UIStaticFiles(StaticFiles):
+    # dist bisa belum ada saat API start (ui-build jalan paralel / build gagal)
+    # -> jangan crash, balikin pesan 503 sampai build selesai.
+    async def check_config(self) -> None:
+        if UI_DIST_DIR.is_dir():
+            await super().check_config()
+
+    async def get_response(self, path, scope):
+        if not (UI_DIST_DIR / "index.html").is_file():
+            return HTMLResponse(
+                "<h3>Edot Bridge UI belum di-build.</h3>"
+                "<p>Cek: <code>docker compose logs ui-build</code></p>",
+                status_code=503,
+            )
+        return await super().get_response(path, scope)
+
+
+app.mount("/ui", UIStaticFiles(directory=UI_DIST_DIR, html=True, check_dir=False), name="ui")
